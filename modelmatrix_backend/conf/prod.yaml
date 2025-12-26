@@ -1,0 +1,42 @@
+env: prod
+server:
+  port: 8080
+  host: "0.0.0.0"
+
+database:
+  host: ${DB_HOST}
+  port: ${DB_PORT}
+  username: ${DB_USERNAME}
+  password: ${DB_PASSWORD}
+  dbname: ${DB_NAME}
+  sslmode: require
+  max_idle_conns: 10
+  max_open_conns: 100
+
+ldap:
+  host: ${LDAP_HOST}
+  port: ${LDAP_PORT}
+  base_dn: "dc=modelmatrix,dc=local"
+  bind_dn: "uid=admin,ou=people,dc=modelmatrix,dc=local"
+  bind_password: ${LDAP_BIND_PASSWORD}
+  user_filter: "(uid=%s)"
+  group_filter: "(member=%s)"
+  use_tls: true
+
+fileservice:
+  minio_endpoint: ${MINIO_ENDPOINT}
+  minio_access_key: ${MINIO_ACCESS_KEY}
+  minio_secret_key: ${MINIO_SECRET_KEY}
+  minio_bucket: ${MINIO_BUCKET}
+  minio_use_ssl: ${MINIO_USE_SSL}
+
+jwt:
+  secret: ${JWT_SECRET}
+  expiration_hours: 24
+
+logging:
+  level: info
+  format: json
+  output: file
+  file_path: /var/log/modelmatrix/app.log
+

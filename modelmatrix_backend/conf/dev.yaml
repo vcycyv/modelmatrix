@@ -1,0 +1,41 @@
+env: dev
+server:
+  port: 8080
+  host: "0.0.0.0"
+
+database:
+  host: localhost
+  port: 5432
+  username: postgres
+  password: dayang
+  dbname: modelmatrix
+  sslmode: disable
+  max_idle_conns: 10
+  max_open_conns: 100
+
+ldap:
+  host: localhost
+  port: 3890
+  base_dn: "dc=modelmatrix,dc=local"
+  bind_dn: "uid=admin,ou=people,dc=modelmatrix,dc=local"
+  bind_password: "dayangdayang"
+  user_filter: "(uid=%s)"
+  group_filter: "(member=%s)"
+  use_tls: false
+
+fileservice:
+  minio_endpoint: "localhost:9000"
+  minio_access_key: "minioadmin"
+  minio_secret_key: "minioadmin123"
+  minio_bucket: "modelmatrix"
+  minio_use_ssl: false
+
+jwt:
+  secret: "modelmatrix-dev-jwt-secret-key-2024"
+  expiration_hours: 24
+
+logging:
+  level: debug
+  format: json
+  output: stdout
+
