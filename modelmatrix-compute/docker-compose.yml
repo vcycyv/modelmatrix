@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  compute:
+    build: .
+    container_name: modelmatrix-compute
+    ports:
+      - "8081:8081"
+    environment:
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - MINIO_BUCKET=modelmatrix
+      - MINIO_USE_SSL=false
+      - COMPUTE_HOST=0.0.0.0
+      - COMPUTE_PORT=8081
+      - LOG_LEVEL=info
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      - minio
+    networks:
+      - modelmatrix-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: modelmatrix-compute-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin123
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - modelmatrix-network
+
+volumes:
+  minio-data:
+
+networks:
+  modelmatrix-network:
+    driver: bridge
+
+

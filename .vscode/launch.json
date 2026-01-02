@@ -1,36 +1,86 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "Launch Backend API",
-            "type": "go",
-            "request": "launch",
-            "mode": "auto",
-            "program": "${workspaceFolder}/modelmatrix_backend/cmd/api/main.go",
-            "cwd": "${workspaceFolder}/modelmatrix_backend",
-            "env": {},
-            "args": []
-        },
-        {
-            "name": "Launch Migrate",
-            "type": "go",
-            "request": "launch",
-            "mode": "auto",
-            "program": "${workspaceFolder}/modelmatrix_backend/cmd/migrate/main.go",
-            "cwd": "${workspaceFolder}/modelmatrix_backend",
-            "env": {},
-            "args": []
-        },
-        {
-            "name": "Launch Migrate (Fresh)",
-            "type": "go",
-            "request": "launch",
-            "mode": "auto",
-            "program": "${workspaceFolder}/modelmatrix_backend/cmd/migrate/main.go",
-            "cwd": "${workspaceFolder}/modelmatrix_backend",
-            "env": {},
-            "args": ["-drop"]
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Go: ModelMatrix Backend API",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/modelmatrix-server/cmd/api/main.go",
+      "cwd": "${workspaceFolder}/modelmatrix-server",
+      "env": {},
+      "args": [],
+      "showLog": true
+    },
+    {
+      "name": "Python: ModelMatrix Compute Service",
+      "type": "python",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "src.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8081",
+        "--reload"
+      ],
+      "jinja": true,
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}/modelmatrix-compute",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/modelmatrix-compute",
+        "MINIO_ENDPOINT": "localhost:9000",
+        "MINIO_ACCESS_KEY": "minioadmin",
+        "MINIO_SECRET_KEY": "minioadmin123",
+        "MINIO_BUCKET": "modelmatrix",
+        "COMPUTE_HOST": "0.0.0.0",
+        "COMPUTE_PORT": "8081",
+        "LOG_LEVEL": "info"
+      },
+      "python": "${workspaceFolder}/modelmatrix-compute/venv/bin/python",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Python: ModelMatrix Compute Service (Direct)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/modelmatrix-compute/src/main.py",
+      "jinja": true,
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}/modelmatrix-compute",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/modelmatrix-compute",
+        "MINIO_ENDPOINT": "localhost:9000",
+        "MINIO_ACCESS_KEY": "minioadmin",
+        "MINIO_SECRET_KEY": "minioadmin123",
+        "MINIO_BUCKET": "modelmatrix",
+        "COMPUTE_HOST": "0.0.0.0",
+        "COMPUTE_PORT": "8081",
+        "LOG_LEVEL": "info"
+      },
+      "python": "${workspaceFolder}/modelmatrix-compute/venv/bin/python",
+      "console": "integratedTerminal"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Launch Backend + Compute (Uvicorn)",
+      "configurations": [
+        "Go: ModelMatrix Backend API",
+        "Python: ModelMatrix Compute Service"
+      ],
+      "stopAll": true,
+      "preLaunchTask": ""
+    },
+    {
+      "name": "Launch Backend + Compute (Direct)",
+      "configurations": [
+        "Go: ModelMatrix Backend API",
+        "Python: ModelMatrix Compute Service (Direct)"
+      ],
+      "stopAll": true,
+      "preLaunchTask": ""
+    }
+  ]
 }
-

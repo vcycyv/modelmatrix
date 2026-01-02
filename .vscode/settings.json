@@ -1,0 +1,28 @@
+{
+  // Python interpreter for modelmatrix-compute project
+  "python.defaultInterpreterPath": "${workspaceFolder}/modelmatrix-compute/venv/bin/python",
+  
+  // Python analysis settings
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/modelmatrix-compute/src"
+  ],
+  "python.analysis.autoImportCompletions": true,
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.diagnosticMode": "workspace",
+  
+  // Python editor settings
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  },
+  
+  // File exclusions
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true
+  }
+}
+
