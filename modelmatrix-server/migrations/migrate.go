@@ -2,8 +2,8 @@ package migrations
 
 import (
 	"modelmatrix-server/internal/infrastructure/folderservice"
-	dsModel "modelmatrix-server/internal/module/datasource/model"
 	mbModel "modelmatrix-server/internal/module/build/model"
+	dsModel "modelmatrix-server/internal/module/datasource/model"
 	mmModel "modelmatrix-server/internal/module/inventory/model"
 
 	"gorm.io/gorm"

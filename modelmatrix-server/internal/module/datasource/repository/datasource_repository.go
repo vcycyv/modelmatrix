@@ -87,7 +87,7 @@ func (r *DatasourceRepositoryImpl) List(collectionID *string, offset, limit int,
 	var models []model.DatasourceModel
 	var total int64
 
-	query := r.db.Model(&model.DatasourceModel{}).Preload("Collection")
+	query := r.db.Model(&model.DatasourceModel{}).Preload("Collection").Preload("Columns")
 
 	if collectionID != nil {
 		query = query.Where("collection_id = ?", *collectionID)
@@ -107,7 +107,7 @@ func (r *DatasourceRepositoryImpl) List(collectionID *string, offset, limit int,
 
 	datasources := make([]domain.Datasource, len(models))
 	for i, m := range models {
-		datasources[i] = *r.toDomain(&m)
+		datasources[i] = *r.toDomainWithColumns(&m)
 	}
 
 	return datasources, total, nil

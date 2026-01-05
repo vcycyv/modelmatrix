@@ -1,14 +1,15 @@
 import { useState, MouseEvent } from 'react';
 import Layout from '../components/Layout';
 import TreeView, { TreeNode } from '../components/TreeView';
-import DetailPanel from '../components/DetailPanel';
+import DetailPanel, { DataNode } from '../components/DetailPanel';
 import ContextMenu, { MenuItem, MenuIcons } from '../components/ContextMenu';
 import FolderDialog from '../components/FolderDialog';
 import ProjectDialog from '../components/ProjectDialog';
 import BuildModelDialog from '../components/BuildModelDialog';
+import BuildEditDialog from '../components/BuildEditDialog';
 import ConfirmDialog from '../components/ConfirmDialog';
 import DataSourcePanel from '../components/DataSourcePanel';
-import { folderApi, projectApi, Folder, Project } from '../lib/api';
+import { folderApi, projectApi, buildApi, modelApi, datasourceApi, collectionApi, Folder, Project, ModelBuild, Model, Collection, Datasource } from '../lib/api';
 
 type SidebarTab = 'explorer' | 'datasource';
 
@@ -21,8 +22,12 @@ interface ContextMenuState {
 export default function MainPage() {
   const [activeTab, setActiveTab] = useState<SidebarTab>('explorer');
   const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null);
+  const [selectedDataNode, setSelectedDataNode] = useState<DataNode | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [dataRefreshTrigger, setDataRefreshTrigger] = useState(0);
+  // For targeted node refresh (folder-specific refresh)
+  const [refreshNode, setRefreshNode] = useState<{ id: string; type: 'folder' | 'project' } | null>(null);
 
   // Dialog states
   const [folderDialog, setFolderDialog] = useState<{
@@ -52,12 +57,54 @@ export default function MainPage() {
     folderName?: string;
   }>({ isOpen: false });
 
+  const [buildEditDialog, setBuildEditDialog] = useState<{
+    isOpen: boolean;
+    build?: ModelBuild;
+  }>({ isOpen: false });
+
   // Refresh tree
   const refresh = () => setRefreshTrigger((prev) => prev + 1);
 
-  // Handle node selection
+  // Handle node selection from Explorer tree
   const handleSelect = (node: TreeNode) => {
     setSelectedNode(node);
+    setSelectedDataNode(null); // Clear data selection when selecting from explorer
+  };
+
+  // Handle data item selection from Data tab
+  const handleDataSelect = (item: { type: 'collection' | 'datasource'; data: Collection | Datasource }) => {
+    setSelectedDataNode({
+      id: item.data.id,
+      name: item.data.name,
+      type: item.type,
+      data: item.data,
+    });
+    setSelectedNode(null); // Clear explorer selection when selecting from data tab
+  };
+
+  // Handle delete data node (datasource or collection)
+  const handleDeleteDataNode = async () => {
+    if (!selectedDataNode) return;
+
+    const confirmMessage = selectedDataNode.type === 'collection'
+      ? `Delete collection "${selectedDataNode.name}"? This will also delete all data sources in it.`
+      : `Delete data source "${selectedDataNode.name}"? This will delete the data from storage.`;
+
+    if (!confirm(confirmMessage)) return;
+
+    try {
+      if (selectedDataNode.type === 'datasource') {
+        await datasourceApi.delete(selectedDataNode.id);
+      } else {
+        await collectionApi.delete(selectedDataNode.id);
+      }
+      setSelectedDataNode(null);
+      // Trigger refresh of the DataSourcePanel
+      setDataRefreshTrigger((prev) => prev + 1);
+    } catch (error) {
+      console.error('Failed to delete:', error);
+      alert(error instanceof Error ? error.message : 'Failed to delete');
+    }
   };
 
   // Handle context menu
@@ -133,6 +180,11 @@ export default function MainPage() {
         },
         { label: '', divider: true, onClick: () => {} },
         {
+          label: 'Refresh',
+          icon: MenuIcons.refresh,
+          onClick: () => setRefreshNode({ id: node.id, type: 'folder' }),
+        },
+        {
           label: 'Edit Folder',
           icon: MenuIcons.edit,
           onClick: () => setFolderDialog({ isOpen: true, folder: node.data as Folder }),
@@ -155,6 +207,11 @@ export default function MainPage() {
         },
         { label: '', divider: true, onClick: () => {} },
         {
+          label: 'Refresh',
+          icon: MenuIcons.refresh,
+          onClick: () => setRefreshNode({ id: node.id, type: 'project' }),
+        },
+        {
           label: 'Edit Project',
           icon: MenuIcons.edit,
           onClick: () => setProjectDialog({ isOpen: true, project: node.data as Project }),
@@ -169,13 +226,70 @@ export default function MainPage() {
     }
 
     if (node.type === 'build') {
-      return [
+      const build = node.data as ModelBuild;
+      const items: MenuItem[] = [];
+      
+      if (build.status === 'pending') {
+        items.push({
+          label: 'Start Build',
+          icon: MenuIcons.project,
+          onClick: async () => {
+            try {
+              await buildApi.start(node.id);
+              // Targeted refresh of parent
+              if (build.folder_id) {
+                setRefreshNode({ id: build.folder_id, type: 'folder' });
+              } else if (build.project_id) {
+                setRefreshNode({ id: build.project_id, type: 'project' });
+              } else {
+                refresh();
+              }
+            } catch (error) {
+              console.error('Failed to start build:', error);
+            }
+          },
+        });
+      }
+      
+      if (build.status === 'running') {
+        items.push({
+          label: 'Cancel Build',
+          icon: MenuIcons.delete,
+          onClick: async () => {
+            if (!confirm(`Cancel build "${build.name}"?`)) return;
+            try {
+              await buildApi.cancel(node.id);
+              // Targeted refresh of parent
+              if (build.folder_id) {
+                setRefreshNode({ id: build.folder_id, type: 'folder' });
+              } else if (build.project_id) {
+                setRefreshNode({ id: build.project_id, type: 'project' });
+              } else {
+                refresh();
+              }
+            } catch (error) {
+              console.error('Failed to cancel build:', error);
+              alert(error instanceof Error ? error.message : 'Failed to cancel build');
+            }
+          },
+        });
+      }
+      
+      items.push(
         {
-          label: 'View Details',
+          label: 'Edit Build',
           icon: MenuIcons.edit,
-          onClick: () => setSelectedNode(node),
+          onClick: () => setBuildEditDialog({ isOpen: true, build }),
         },
-      ];
+        {
+          label: 'Delete Build',
+          icon: MenuIcons.delete,
+          danger: true,
+          onClick: () => setDeleteDialog({ isOpen: true, node, isLoading: false }),
+        },
+      );
+      
+      return items;
     }
 
     if (node.type === 'model') {
@@ -184,6 +298,12 @@ export default function MainPage() {
           label: 'View Details',
           icon: MenuIcons.edit,
           onClick: () => setSelectedNode(node),
+        },
+        {
+          label: 'Delete Model',
+          icon: MenuIcons.delete,
+          danger: true,
+          onClick: () => setDeleteDialog({ isOpen: true, node, isLoading: false }),
         },
       ];
     }
@@ -196,24 +316,73 @@ export default function MainPage() {
     if (!deleteDialog.node) return;
 
     setDeleteDialog((prev) => ({ ...prev, isLoading: true }));
+    const nodeToDelete = deleteDialog.node;
 
     try {
-      if (deleteDialog.node.type === 'folder') {
-        await folderApi.delete(deleteDialog.node.id);
-      } else if (deleteDialog.node.type === 'project') {
-        await projectApi.delete(deleteDialog.node.id);
+      if (nodeToDelete.type === 'folder') {
+        await folderApi.delete(nodeToDelete.id);
+      } else if (nodeToDelete.type === 'project') {
+        await projectApi.delete(nodeToDelete.id);
+      } else if (nodeToDelete.type === 'build') {
+        await buildApi.delete(nodeToDelete.id);
+      } else if (nodeToDelete.type === 'model') {
+        await modelApi.delete(nodeToDelete.id);
       }
 
       // Clear selection if deleted node was selected
-      if (selectedNode?.id === deleteDialog.node.id) {
+      if (selectedNode?.id === nodeToDelete.id) {
         setSelectedNode(null);
       }
 
-      refresh();
+      // Targeted refresh based on node type and parent
+      if (nodeToDelete.type === 'folder') {
+        const folder = nodeToDelete.data as Folder;
+        if (folder.parent_id) {
+          setRefreshNode({ id: folder.parent_id, type: 'folder' });
+        } else {
+          refresh(); // Root level folder, need full refresh
+        }
+      } else if (nodeToDelete.type === 'project') {
+        const project = nodeToDelete.data as Project;
+        if (project.folder_id) {
+          setRefreshNode({ id: project.folder_id, type: 'folder' });
+        } else {
+          refresh(); // Root level project (shouldn't happen normally)
+        }
+      } else if (nodeToDelete.type === 'build') {
+        const build = nodeToDelete.data as ModelBuild;
+        if (build.folder_id) {
+          setRefreshNode({ id: build.folder_id, type: 'folder' });
+        } else if (build.project_id) {
+          setRefreshNode({ id: build.project_id, type: 'project' });
+        } else {
+          refresh();
+        }
+      } else if (nodeToDelete.type === 'model') {
+        const model = nodeToDelete.data as Model;
+        if (model.folder_id) {
+          setRefreshNode({ id: model.folder_id, type: 'folder' });
+        } else if (model.project_id) {
+          setRefreshNode({ id: model.project_id, type: 'project' });
+        } else {
+          refresh();
+        }
+      } else {
+        refresh();
+      }
+      
       setDeleteDialog({ isOpen: false, node: null, isLoading: false });
     } catch (error) {
       console.error('Delete failed:', error);
       setDeleteDialog((prev) => ({ ...prev, isLoading: false }));
+      
+      // Show helpful error message
+      const errorMsg = error instanceof Error ? error.message : 'Delete failed';
+      if (errorMsg.includes('already running') || errorMsg.includes('running')) {
+        alert('Cannot delete a running build. Please cancel the build first, then try deleting again.');
+      } else {
+        alert(errorMsg);
+      }
     }
   };
 
@@ -225,6 +394,8 @@ export default function MainPage() {
       setFolderDialog({ isOpen: true, folder: selectedNode.data as Folder });
     } else if (selectedNode.type === 'project') {
       setProjectDialog({ isOpen: true, project: selectedNode.data as Project });
+    } else if (selectedNode.type === 'build') {
+      setBuildEditDialog({ isOpen: true, build: selectedNode.data as ModelBuild });
     }
   };
 
@@ -232,6 +403,65 @@ export default function MainPage() {
   const handleDeleteFromPanel = () => {
     if (!selectedNode) return;
     setDeleteDialog({ isOpen: true, node: selectedNode, isLoading: false });
+  };
+
+  // Handle start build
+  const handleStartBuild = async () => {
+    if (!selectedNode || selectedNode.type !== 'build') return;
+    
+    try {
+      await buildApi.start(selectedNode.id);
+      
+      // Refresh the selected node data
+      const updatedBuild = await buildApi.get(selectedNode.id);
+      setSelectedNode({
+        ...selectedNode,
+        data: updatedBuild,
+      });
+      
+      // Targeted refresh of parent folder or project
+      if (updatedBuild.folder_id) {
+        setRefreshNode({ id: updatedBuild.folder_id, type: 'folder' });
+      } else if (updatedBuild.project_id) {
+        setRefreshNode({ id: updatedBuild.project_id, type: 'project' });
+      } else {
+        refresh();
+      }
+    } catch (error) {
+      console.error('Failed to start build:', error);
+      alert('Failed to start build. Please try again.');
+    }
+  };
+
+  // Handle cancel build
+  const handleCancelBuild = async () => {
+    if (!selectedNode || selectedNode.type !== 'build') return;
+    
+    const build = selectedNode.data as ModelBuild;
+    if (!confirm(`Cancel build "${build.name}"? This will stop the build process.`)) return;
+    
+    try {
+      await buildApi.cancel(selectedNode.id);
+      
+      // Refresh the selected node data
+      const updatedBuild = await buildApi.get(selectedNode.id);
+      setSelectedNode({
+        ...selectedNode,
+        data: updatedBuild,
+      });
+      
+      // Targeted refresh of parent folder or project
+      if (updatedBuild.folder_id) {
+        setRefreshNode({ id: updatedBuild.folder_id, type: 'folder' });
+      } else if (updatedBuild.project_id) {
+        setRefreshNode({ id: updatedBuild.project_id, type: 'project' });
+      } else {
+        refresh();
+      }
+    } catch (error) {
+      console.error('Failed to cancel build:', error);
+      alert(error instanceof Error ? error.message : 'Failed to cancel build. Please try again.');
+    }
   };
 
   // Explorer tab content
@@ -249,8 +479,19 @@ export default function MainPage() {
               isOpen: true, 
               parentId: selectedNode?.type === 'folder' ? selectedNode.id : undefined 
             })}
-            className="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors"
-            title={selectedNode?.type === 'folder' ? 'New Subfolder' : 'New Folder'}
+            disabled={selectedNode !== null && selectedNode.type !== 'folder'}
+            className={`p-1.5 rounded transition-colors ${
+              selectedNode !== null && selectedNode.type !== 'folder'
+                ? 'text-slate-300 cursor-not-allowed'
+                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'
+            }`}
+            title={
+              selectedNode !== null && selectedNode.type !== 'folder'
+                ? 'Cannot create folder under this item'
+                : selectedNode?.type === 'folder'
+                ? 'New Subfolder'
+                : 'New Folder'
+            }
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
@@ -262,8 +503,19 @@ export default function MainPage() {
               const folderName = selectedNode?.type === 'folder' ? selectedNode.name : undefined;
               setProjectDialog({ isOpen: true, folderId, folderName });
             }}
-            className="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors"
-            title={selectedNode?.type === 'folder' ? `New Project in "${selectedNode.name}"` : 'New Project'}
+            disabled={selectedNode !== null && selectedNode.type !== 'folder'}
+            className={`p-1.5 rounded transition-colors ${
+              selectedNode !== null && selectedNode.type !== 'folder'
+                ? 'text-slate-300 cursor-not-allowed'
+                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'
+            }`}
+            title={
+              selectedNode !== null && selectedNode.type !== 'folder'
+                ? 'Cannot create project under this item'
+                : selectedNode?.type === 'folder'
+                ? `New Project in "${selectedNode.name}"`
+                : 'New Project'
+            }
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -288,6 +540,9 @@ export default function MainPage() {
           selectedId={selectedNode?.id}
           onContextMenu={handleContextMenu}
           refreshTrigger={refreshTrigger}
+          refreshNodeId={refreshNode?.id}
+          refreshNodeType={refreshNode?.type}
+          onNodeRefreshed={() => setRefreshNode(null)}
         />
       </div>
     </div>
@@ -336,9 +591,12 @@ export default function MainPage() {
         </button>
       </div>
 
-      {/* Tab content */}
-      <div className="flex-1 overflow-hidden">
-        {activeTab === 'explorer' ? explorerContent : <DataSourcePanel />}
+      {/* Tab content - render both but hide inactive to preserve state */}
+      <div className={`flex-1 overflow-hidden ${activeTab === 'explorer' ? '' : 'hidden'}`}>
+        {explorerContent}
+      </div>
+      <div className={`flex-1 overflow-hidden ${activeTab === 'datasource' ? '' : 'hidden'}`}>
+        <DataSourcePanel onSelect={handleDataSelect} refreshTrigger={dataRefreshTrigger} />
       </div>
     </div>
   );
@@ -347,6 +605,7 @@ export default function MainPage() {
     <Layout sidebar={sidebar}>
       <DetailPanel
         node={selectedNode}
+        dataNode={selectedDataNode}
         onEdit={handleEdit}
         onDelete={handleDeleteFromPanel}
         onBuildModel={
@@ -356,6 +615,9 @@ export default function MainPage() {
             ? () => setBuildDialog({ isOpen: true, folderId: selectedNode.id, folderName: selectedNode.name })
             : undefined
         }
+        onStartBuild={selectedNode?.type === 'build' ? handleStartBuild : undefined}
+        onCancelBuild={selectedNode?.type === 'build' ? handleCancelBuild : undefined}
+        onDeleteDataNode={selectedDataNode ? handleDeleteDataNode : undefined}
       />
 
       {/* Context Menu */}
@@ -372,7 +634,14 @@ export default function MainPage() {
       <FolderDialog
         isOpen={folderDialog.isOpen}
         onClose={() => setFolderDialog({ isOpen: false })}
-        onSuccess={refresh}
+        onSuccess={() => {
+          // Targeted refresh: only refresh the parent folder if creating subfolder
+          if (folderDialog.parentId) {
+            setRefreshNode({ id: folderDialog.parentId, type: 'folder' });
+          } else {
+            refresh(); // Full refresh for root-level folders
+          }
+        }}
         parentId={folderDialog.parentId}
         folder={folderDialog.folder}
       />
@@ -381,7 +650,14 @@ export default function MainPage() {
       <ProjectDialog
         isOpen={projectDialog.isOpen}
         onClose={() => setProjectDialog({ isOpen: false })}
-        onSuccess={refresh}
+        onSuccess={() => {
+          // Targeted refresh: only refresh the parent folder
+          if (projectDialog.folderId) {
+            setRefreshNode({ id: projectDialog.folderId, type: 'folder' });
+          } else {
+            refresh(); // Fallback to full refresh
+          }
+        }}
         folderId={projectDialog.folderId}
         folderName={projectDialog.folderName}
         project={projectDialog.project}
@@ -402,11 +678,44 @@ export default function MainPage() {
       <BuildModelDialog
         isOpen={buildDialog.isOpen}
         onClose={() => setBuildDialog({ isOpen: false })}
-        onSuccess={refresh}
+        onSuccess={() => {
+          // Targeted refresh: only refresh the parent folder or project
+          if (buildDialog.folderId) {
+            setRefreshNode({ id: buildDialog.folderId, type: 'folder' });
+          } else if (buildDialog.projectId) {
+            setRefreshNode({ id: buildDialog.projectId, type: 'project' });
+          } else {
+            refresh(); // Fallback to full refresh
+          }
+        }}
         projectId={buildDialog.projectId}
         projectName={buildDialog.projectName}
         folderId={buildDialog.folderId}
         folderName={buildDialog.folderName}
+      />
+
+      {/* Build Edit Dialog */}
+      <BuildEditDialog
+        isOpen={buildEditDialog.isOpen}
+        onClose={() => setBuildEditDialog({ isOpen: false })}
+        onSuccess={() => {
+          // Targeted refresh based on parent
+          const build = buildEditDialog.build;
+          if (build?.folder_id) {
+            setRefreshNode({ id: build.folder_id, type: 'folder' });
+          } else if (build?.project_id) {
+            setRefreshNode({ id: build.project_id, type: 'project' });
+          } else {
+            refresh();
+          }
+          // Refresh selected node if it's the edited build
+          if (selectedNode?.type === 'build' && build?.id === selectedNode.id) {
+            buildApi.get(selectedNode.id).then((updatedBuild) => {
+              setSelectedNode({ ...selectedNode, name: updatedBuild.name, data: updatedBuild });
+            });
+          }
+        }}
+        build={buildEditDialog.build}
       />
     </Layout>
   );

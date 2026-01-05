@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"modelmatrix-server/internal/infrastructure/compute"
+	"modelmatrix-server/internal/infrastructure/folderservice"
 	dsApp "modelmatrix-server/internal/module/datasource/application"
 	dsDomain "modelmatrix-server/internal/module/datasource/domain"
 	"modelmatrix-server/internal/module/build/domain"
@@ -35,6 +36,7 @@ type BuildServiceImpl struct {
 	computeClient     compute.Client
 	datasourceService dsApp.DatasourceService
 	modelService      invApp.ModelService
+	folderService     folderservice.FolderService
 	config            *config.Config
 }
 
@@ -45,6 +47,7 @@ func NewBuildService(
 	computeClient compute.Client,
 	datasourceService dsApp.DatasourceService,
 	modelService invApp.ModelService,
+	folderSvc folderservice.FolderService,
 	cfg *config.Config,
 ) BuildService {
 	return &BuildServiceImpl{
@@ -53,6 +56,7 @@ func NewBuildService(
 		computeClient:     computeClient,
 		datasourceService: datasourceService,
 		modelService:      modelService,
+		folderService:     folderSvc,
 		config:            cfg,
 	}
 }
@@ -89,6 +93,8 @@ func (s *BuildServiceImpl) Create(req *dto.CreateBuildRequest, createdBy string)
 		Name:         req.Name,
 		Description:  req.Description,
 		DatasourceID: req.DatasourceID,
+		ProjectID:    req.ProjectID,
+		FolderID:     req.FolderID,
 		ModelType:    modelType,
 		Status:       domain.BuildStatusPending,
 		Parameters:   params,
@@ -447,12 +453,14 @@ func (s *BuildServiceImpl) createModelFromBuild(build *domain.ModelBuild, callba
 		modelFilePath = *callback.ModelPath
 	}
 
-	// Create model
+	// Create model with the same project/folder as the build
 	createReq := &invDto.CreateModelFromBuildRequest{
 		BuildID:       build.ID,
 		Name:          build.Name,
 		Description:   build.Description,
 		DatasourceID:  build.DatasourceID,
+		ProjectID:     build.ProjectID,
+		FolderID:      build.FolderID,
 		Algorithm:     build.Parameters.Algorithm,
 		ModelType:     string(build.ModelType),
 		TargetColumn:  targetColumn,
@@ -468,6 +476,7 @@ func (s *BuildServiceImpl) createModelFromBuild(build *domain.ModelBuild, callba
 	}
 
 	logger.Info("Created model from build %s", build.ID)
+
 	return nil
 }
 
@@ -514,6 +523,8 @@ func toBuildResponse(build *domain.ModelBuild) *dto.BuildResponse {
 		Name:         build.Name,
 		Description:  build.Description,
 		DatasourceID: build.DatasourceID,
+		ProjectID:    build.ProjectID,
+		FolderID:     build.FolderID,
 		ModelType:    string(build.ModelType),
 		Status:       string(build.Status),
 		ErrorMessage: build.ErrorMessage,

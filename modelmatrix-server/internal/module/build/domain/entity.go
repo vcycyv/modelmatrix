@@ -55,6 +55,8 @@ type ModelBuild struct {
 	Name         string
 	Description  string
 	DatasourceID string
+	ProjectID    *string  // Belongs to project (one-to-many)
+	FolderID     *string  // Belongs to folder directly (one-to-many)
 	ModelType    ModelType
 	Status       BuildStatus
 	Parameters   TrainingParameters

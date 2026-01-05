@@ -9,6 +9,8 @@ type CreateBuildRequest struct {
 	Name         string                     `json:"name" binding:"required,min=1,max=255" example:"Sales Predictor v1"`
 	Description  string                     `json:"description" binding:"max=1000" example:"Random forest model for sales prediction"`
 	DatasourceID string                     `json:"datasource_id" binding:"required,uuid" example:"550e8400-e29b-41d4-a716-446655440000"`
+	ProjectID    *string                    `json:"project_id,omitempty" binding:"omitempty,uuid" example:"550e8400-e29b-41d4-a716-446655440002"`
+	FolderID     *string                    `json:"folder_id,omitempty" binding:"omitempty,uuid" example:"550e8400-e29b-41d4-a716-446655440003"`
 	ModelType    string                     `json:"model_type" binding:"required,oneof=classification regression clustering" example:"regression"`
 	Parameters   *TrainingParametersRequest `json:"parameters,omitempty"`
 }
@@ -36,6 +38,8 @@ type BuildResponse struct {
 	Description    string                      `json:"description" example:"Random forest model for sales prediction"`
 	DatasourceID   string                      `json:"datasource_id" example:"550e8400-e29b-41d4-a716-446655440001"`
 	DatasourceName string                      `json:"datasource_name,omitempty" example:"Sales Data 2024"`
+	ProjectID      *string                     `json:"project_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440002"`
+	FolderID       *string                     `json:"folder_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440003"`
 	ModelType      string                      `json:"model_type" example:"regression"`
 	Status         string                      `json:"status" example:"completed"`
 	Parameters     *TrainingParametersResponse `json:"parameters,omitempty"`

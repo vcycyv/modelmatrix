@@ -108,89 +108,8 @@ func (p *ProjectModel) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
-// ProjectModelAssociation is the GORM model for project-model associations
-type ProjectModelAssociation struct {
-	ID        string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	ProjectID string    `gorm:"type:uuid;not null;index:idx_project_model_project"`
-	ModelID   string    `gorm:"type:uuid;not null;uniqueIndex:idx_project_model_unique"`
-	CreatedAt time.Time `gorm:"autoCreateTime"`
-}
-
-// TableName returns the table name for ProjectModelAssociation
-func (ProjectModelAssociation) TableName() string {
-	return "project_models"
-}
-
-// BeforeCreate generates UUID before creating record
-func (pm *ProjectModelAssociation) BeforeCreate(tx *gorm.DB) error {
-	if pm.ID == "" {
-		pm.ID = uuid.New().String()
-	}
-	return nil
-}
-
-// ProjectBuildAssociation is the GORM model for project-build associations
-type ProjectBuildAssociation struct {
-	ID        string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	ProjectID string    `gorm:"type:uuid;not null;index:idx_project_build_project"`
-	BuildID   string    `gorm:"type:uuid;not null;uniqueIndex:idx_project_build_unique"`
-	CreatedAt time.Time `gorm:"autoCreateTime"`
-}
-
-// TableName returns the table name for ProjectBuildAssociation
-func (ProjectBuildAssociation) TableName() string {
-	return "project_builds"
-}
-
-// BeforeCreate generates UUID before creating record
-func (pb *ProjectBuildAssociation) BeforeCreate(tx *gorm.DB) error {
-	if pb.ID == "" {
-		pb.ID = uuid.New().String()
-	}
-	return nil
-}
-
-// FolderBuildAssociation is the GORM model for folder-build associations (builds directly in folders)
-type FolderBuildAssociation struct {
-	ID        string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	FolderID  string    `gorm:"type:uuid;not null;index:idx_folder_build_folder"`
-	BuildID   string    `gorm:"type:uuid;not null;uniqueIndex:idx_folder_build_unique"`
-	CreatedAt time.Time `gorm:"autoCreateTime"`
-}
-
-// TableName returns the table name for FolderBuildAssociation
-func (FolderBuildAssociation) TableName() string {
-	return "folder_builds"
-}
-
-// BeforeCreate generates UUID before creating record
-func (fb *FolderBuildAssociation) BeforeCreate(tx *gorm.DB) error {
-	if fb.ID == "" {
-		fb.ID = uuid.New().String()
-	}
-	return nil
-}
-
-// FolderModelAssociation is the GORM model for folder-model associations (models directly in folders)
-type FolderModelAssociation struct {
-	ID        string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	FolderID  string    `gorm:"type:uuid;not null;index:idx_folder_model_folder"`
-	ModelID   string    `gorm:"type:uuid;not null;uniqueIndex:idx_folder_model_unique"`
-	CreatedAt time.Time `gorm:"autoCreateTime"`
-}
-
-// TableName returns the table name for FolderModelAssociation
-func (FolderModelAssociation) TableName() string {
-	return "folder_models"
-}
-
-// BeforeCreate generates UUID before creating record
-func (fm *FolderModelAssociation) BeforeCreate(tx *gorm.DB) error {
-	if fm.ID == "" {
-		fm.ID = uuid.New().String()
-	}
-	return nil
-}
+// Note: Junction tables (project_models, project_builds, folder_models, folder_builds)
+// have been removed. Models and builds now have direct project_id and folder_id columns.
 
 // FolderService defines the interface for folder operations
 type FolderService interface {
@@ -409,24 +328,40 @@ func (s *FolderServiceImpl) DeleteFolder(id string, force bool) error {
 		return ErrFolderHasProjects
 	}
 
-	// If force delete, remove all descendants and their projects with associations
+	// If force delete, remove all descendants and their projects, unlink models/builds
 	if force {
 		pathPattern := folderModel.Path + "/%"
 
-		// Delete model associations for projects in descendant folders
+		// Unlink models from projects in descendant folders
 		if err := s.db.Exec(`
-			DELETE FROM project_models 
+			UPDATE models SET project_id = NULL 
 			WHERE project_id IN (SELECT id FROM projects WHERE folder_id IN (SELECT id FROM folders WHERE path LIKE ?))
 		`, pathPattern).Error; err != nil {
-			return fmt.Errorf("failed to delete descendant project model associations: %w", err)
+			return fmt.Errorf("failed to unlink models from descendant projects: %w", err)
 		}
 
-		// Delete build associations for projects in descendant folders
+		// Unlink builds from projects in descendant folders
 		if err := s.db.Exec(`
-			DELETE FROM project_builds 
+			UPDATE model_builds SET project_id = NULL 
 			WHERE project_id IN (SELECT id FROM projects WHERE folder_id IN (SELECT id FROM folders WHERE path LIKE ?))
 		`, pathPattern).Error; err != nil {
-			return fmt.Errorf("failed to delete descendant project build associations: %w", err)
+			return fmt.Errorf("failed to unlink builds from descendant projects: %w", err)
+		}
+
+		// Unlink models directly in descendant folders
+		if err := s.db.Exec(`
+			UPDATE models SET folder_id = NULL 
+			WHERE folder_id IN (SELECT id FROM folders WHERE path LIKE ?)
+		`, pathPattern).Error; err != nil {
+			return fmt.Errorf("failed to unlink models from descendant folders: %w", err)
+		}
+
+		// Unlink builds directly in descendant folders
+		if err := s.db.Exec(`
+			UPDATE model_builds SET folder_id = NULL 
+			WHERE folder_id IN (SELECT id FROM folders WHERE path LIKE ?)
+		`, pathPattern).Error; err != nil {
+			return fmt.Errorf("failed to unlink builds from descendant folders: %w", err)
 		}
 
 		// Delete projects in descendant folders
@@ -441,16 +376,30 @@ func (s *FolderServiceImpl) DeleteFolder(id string, force bool) error {
 			return fmt.Errorf("failed to delete descendants: %w", err)
 		}
 
-		// Delete model/build associations for projects in this folder
+		// Unlink models from projects in this folder
 		if err := s.db.Exec(`
-			DELETE FROM project_models WHERE project_id IN (SELECT id FROM projects WHERE folder_id = ?)
+			UPDATE models SET project_id = NULL 
+			WHERE project_id IN (SELECT id FROM projects WHERE folder_id = ?)
 		`, id).Error; err != nil {
-			return fmt.Errorf("failed to delete project model associations: %w", err)
+			return fmt.Errorf("failed to unlink models from folder projects: %w", err)
 		}
+
+		// Unlink builds from projects in this folder
 		if err := s.db.Exec(`
-			DELETE FROM project_builds WHERE project_id IN (SELECT id FROM projects WHERE folder_id = ?)
+			UPDATE model_builds SET project_id = NULL 
+			WHERE project_id IN (SELECT id FROM projects WHERE folder_id = ?)
 		`, id).Error; err != nil {
-			return fmt.Errorf("failed to delete project build associations: %w", err)
+			return fmt.Errorf("failed to unlink builds from folder projects: %w", err)
+		}
+
+		// Unlink models directly in this folder
+		if err := s.db.Exec("UPDATE models SET folder_id = NULL WHERE folder_id = ?", id).Error; err != nil {
+			return fmt.Errorf("failed to unlink models from folder: %w", err)
+		}
+
+		// Unlink builds directly in this folder
+		if err := s.db.Exec("UPDATE model_builds SET folder_id = NULL WHERE folder_id = ?", id).Error; err != nil {
+			return fmt.Errorf("failed to unlink builds from folder: %w", err)
 		}
 
 		// Delete projects in this folder
@@ -712,7 +661,7 @@ func (s *FolderServiceImpl) DeleteProject(id string, force bool) error {
 
 	// Check for models in project
 	var modelCount int64
-	if err := s.db.Model(&ProjectModelAssociation{}).Where("project_id = ?", id).Count(&modelCount).Error; err != nil {
+	if err := s.db.Table("models").Where("project_id = ?", id).Count(&modelCount).Error; err != nil {
 		return fmt.Errorf("failed to check models: %w", err)
 	}
 	if modelCount > 0 && !force {
@@ -721,20 +670,20 @@ func (s *FolderServiceImpl) DeleteProject(id string, force bool) error {
 
 	// Check for builds in project
 	var buildCount int64
-	if err := s.db.Model(&ProjectBuildAssociation{}).Where("project_id = ?", id).Count(&buildCount).Error; err != nil {
+	if err := s.db.Table("model_builds").Where("project_id = ?", id).Count(&buildCount).Error; err != nil {
 		return fmt.Errorf("failed to check builds: %w", err)
 	}
 	if buildCount > 0 && !force {
 		return ErrProjectHasBuilds
 	}
 
-	// If force delete, remove all associations
+	// If force delete, set project_id to NULL on associated models and builds
 	if force {
-		if err := s.db.Where("project_id = ?", id).Delete(&ProjectModelAssociation{}).Error; err != nil {
-			return fmt.Errorf("failed to delete model associations: %w", err)
+		if err := s.db.Exec("UPDATE models SET project_id = NULL WHERE project_id = ?", id).Error; err != nil {
+			return fmt.Errorf("failed to unlink models: %w", err)
 		}
-		if err := s.db.Where("project_id = ?", id).Delete(&ProjectBuildAssociation{}).Error; err != nil {
-			return fmt.Errorf("failed to delete build associations: %w", err)
+		if err := s.db.Exec("UPDATE model_builds SET project_id = NULL WHERE project_id = ?", id).Error; err != nil {
+			return fmt.Errorf("failed to unlink builds: %w", err)
 		}
 	}
 
@@ -832,15 +781,8 @@ func (s *FolderServiceImpl) AddModelToProject(modelID, projectID string) error {
 		return err
 	}
 
-	// Remove existing association if any
-	s.db.Where("model_id = ?", modelID).Delete(&ProjectModelAssociation{})
-
-	// Create new association
-	pm := &ProjectModelAssociation{
-		ProjectID: projectID,
-		ModelID:   modelID,
-	}
-	if err := s.db.Create(pm).Error; err != nil {
+	// Update model's project_id (also clear folder_id as model can only be in one place)
+	if err := s.db.Exec("UPDATE models SET project_id = ?, folder_id = NULL WHERE id = ?", projectID, modelID).Error; err != nil {
 		return fmt.Errorf("failed to add model to project: %w", err)
 	}
 
@@ -849,36 +791,31 @@ func (s *FolderServiceImpl) AddModelToProject(modelID, projectID string) error {
 
 // RemoveModelFromProject removes a model from its project
 func (s *FolderServiceImpl) RemoveModelFromProject(modelID string) error {
-	result := s.db.Where("model_id = ?", modelID).Delete(&ProjectModelAssociation{})
-	if result.Error != nil {
-		return fmt.Errorf("failed to remove model from project: %w", result.Error)
+	if err := s.db.Exec("UPDATE models SET project_id = NULL WHERE id = ?", modelID).Error; err != nil {
+		return fmt.Errorf("failed to remove model from project: %w", err)
 	}
 	return nil
 }
 
 // GetModelProject gets the project a model belongs to
 func (s *FolderServiceImpl) GetModelProject(modelID string) (*Project, error) {
-	var pm ProjectModelAssociation
-	if err := s.db.Where("model_id = ?", modelID).First(&pm).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil // Model has no project
-		}
+	var projectID *string
+	if err := s.db.Table("models").Where("id = ?", modelID).Pluck("project_id", &projectID).Error; err != nil {
 		return nil, fmt.Errorf("failed to get model project: %w", err)
 	}
 
-	return s.GetProject(pm.ProjectID)
+	if projectID == nil {
+		return nil, nil // Model has no project
+	}
+
+	return s.GetProject(*projectID)
 }
 
 // GetModelsInProject gets all model IDs in a project
 func (s *FolderServiceImpl) GetModelsInProject(projectID string) ([]string, error) {
-	var pms []ProjectModelAssociation
-	if err := s.db.Where("project_id = ?", projectID).Find(&pms).Error; err != nil {
+	var modelIDs []string
+	if err := s.db.Table("models").Where("project_id = ?", projectID).Pluck("id", &modelIDs).Error; err != nil {
 		return nil, fmt.Errorf("failed to get models in project: %w", err)
-	}
-
-	modelIDs := make([]string, len(pms))
-	for i, pm := range pms {
-		modelIDs[i] = pm.ModelID
 	}
 	return modelIDs, nil
 }
@@ -892,15 +829,8 @@ func (s *FolderServiceImpl) AddBuildToProject(buildID, projectID string) error {
 		return err
 	}
 
-	// Remove existing association if any
-	s.db.Where("build_id = ?", buildID).Delete(&ProjectBuildAssociation{})
-
-	// Create new association
-	pb := &ProjectBuildAssociation{
-		ProjectID: projectID,
-		BuildID:   buildID,
-	}
-	if err := s.db.Create(pb).Error; err != nil {
+	// Update build's project_id (also clear folder_id as build can only be in one place)
+	if err := s.db.Exec("UPDATE model_builds SET project_id = ?, folder_id = NULL WHERE id = ?", projectID, buildID).Error; err != nil {
 		return fmt.Errorf("failed to add build to project: %w", err)
 	}
 
@@ -909,36 +839,31 @@ func (s *FolderServiceImpl) AddBuildToProject(buildID, projectID string) error {
 
 // RemoveBuildFromProject removes a build from its project
 func (s *FolderServiceImpl) RemoveBuildFromProject(buildID string) error {
-	result := s.db.Where("build_id = ?", buildID).Delete(&ProjectBuildAssociation{})
-	if result.Error != nil {
-		return fmt.Errorf("failed to remove build from project: %w", result.Error)
+	if err := s.db.Exec("UPDATE model_builds SET project_id = NULL WHERE id = ?", buildID).Error; err != nil {
+		return fmt.Errorf("failed to remove build from project: %w", err)
 	}
 	return nil
 }
 
 // GetBuildProject gets the project a build belongs to
 func (s *FolderServiceImpl) GetBuildProject(buildID string) (*Project, error) {
-	var pb ProjectBuildAssociation
-	if err := s.db.Where("build_id = ?", buildID).First(&pb).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil // Build has no project
-		}
+	var projectID *string
+	if err := s.db.Table("model_builds").Where("id = ?", buildID).Pluck("project_id", &projectID).Error; err != nil {
 		return nil, fmt.Errorf("failed to get build project: %w", err)
 	}
 
-	return s.GetProject(pb.ProjectID)
+	if projectID == nil {
+		return nil, nil // Build has no project
+	}
+
+	return s.GetProject(*projectID)
 }
 
 // GetBuildsInProject gets all build IDs in a project
 func (s *FolderServiceImpl) GetBuildsInProject(projectID string) ([]string, error) {
-	var pbs []ProjectBuildAssociation
-	if err := s.db.Where("project_id = ?", projectID).Find(&pbs).Error; err != nil {
+	var buildIDs []string
+	if err := s.db.Table("model_builds").Where("project_id = ?", projectID).Pluck("id", &buildIDs).Error; err != nil {
 		return nil, fmt.Errorf("failed to get builds in project: %w", err)
-	}
-
-	buildIDs := make([]string, len(pbs))
-	for i, pb := range pbs {
-		buildIDs[i] = pb.BuildID
 	}
 	return buildIDs, nil
 }
@@ -952,17 +877,8 @@ func (s *FolderServiceImpl) AddBuildToFolder(buildID, folderID string) error {
 		return err
 	}
 
-	// Remove from any existing folder or project
-	s.db.Where("build_id = ?", buildID).Delete(&FolderBuildAssociation{})
-	s.db.Where("build_id = ?", buildID).Delete(&ProjectBuildAssociation{})
-
-	// Create new association
-	fb := &FolderBuildAssociation{
-		FolderID: folderID,
-		BuildID:  buildID,
-	}
-
-	if err := s.db.Create(fb).Error; err != nil {
+	// Update build's folder_id (also clear project_id as build can only be in one place)
+	if err := s.db.Exec("UPDATE model_builds SET folder_id = ?, project_id = NULL WHERE id = ?", folderID, buildID).Error; err != nil {
 		return fmt.Errorf("failed to add build to folder: %w", err)
 	}
 	return nil
@@ -970,35 +886,31 @@ func (s *FolderServiceImpl) AddBuildToFolder(buildID, folderID string) error {
 
 // RemoveBuildFromFolder removes a build from its folder
 func (s *FolderServiceImpl) RemoveBuildFromFolder(buildID string) error {
-	result := s.db.Where("build_id = ?", buildID).Delete(&FolderBuildAssociation{})
-	if result.Error != nil {
-		return fmt.Errorf("failed to remove build from folder: %w", result.Error)
+	if err := s.db.Exec("UPDATE model_builds SET folder_id = NULL WHERE id = ?", buildID).Error; err != nil {
+		return fmt.Errorf("failed to remove build from folder: %w", err)
 	}
 	return nil
 }
 
 // GetBuildFolder gets the folder a build belongs to (if directly in a folder)
 func (s *FolderServiceImpl) GetBuildFolder(buildID string) (*Folder, error) {
-	var fb FolderBuildAssociation
-	if err := s.db.Where("build_id = ?", buildID).First(&fb).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil // Build has no folder
-		}
+	var folderID *string
+	if err := s.db.Table("model_builds").Where("id = ?", buildID).Pluck("folder_id", &folderID).Error; err != nil {
 		return nil, fmt.Errorf("failed to get build folder: %w", err)
 	}
-	return s.GetFolder(fb.FolderID)
+
+	if folderID == nil {
+		return nil, nil // Build has no folder
+	}
+
+	return s.GetFolder(*folderID)
 }
 
 // GetBuildsInFolder gets all build IDs directly in a folder
 func (s *FolderServiceImpl) GetBuildsInFolder(folderID string) ([]string, error) {
-	var fbs []FolderBuildAssociation
-	if err := s.db.Where("folder_id = ?", folderID).Find(&fbs).Error; err != nil {
+	var buildIDs []string
+	if err := s.db.Table("model_builds").Where("folder_id = ?", folderID).Pluck("id", &buildIDs).Error; err != nil {
 		return nil, fmt.Errorf("failed to get builds in folder: %w", err)
-	}
-
-	buildIDs := make([]string, len(fbs))
-	for i, fb := range fbs {
-		buildIDs[i] = fb.BuildID
 	}
 	return buildIDs, nil
 }
@@ -1012,17 +924,8 @@ func (s *FolderServiceImpl) AddModelToFolder(modelID, folderID string) error {
 		return err
 	}
 
-	// Remove from any existing folder or project
-	s.db.Where("model_id = ?", modelID).Delete(&FolderModelAssociation{})
-	s.db.Where("model_id = ?", modelID).Delete(&ProjectModelAssociation{})
-
-	// Create new association
-	fm := &FolderModelAssociation{
-		FolderID: folderID,
-		ModelID:  modelID,
-	}
-
-	if err := s.db.Create(fm).Error; err != nil {
+	// Update model's folder_id (also clear project_id as model can only be in one place)
+	if err := s.db.Exec("UPDATE models SET folder_id = ?, project_id = NULL WHERE id = ?", folderID, modelID).Error; err != nil {
 		return fmt.Errorf("failed to add model to folder: %w", err)
 	}
 	return nil
@@ -1030,35 +933,31 @@ func (s *FolderServiceImpl) AddModelToFolder(modelID, folderID string) error {
 
 // RemoveModelFromFolder removes a model from its folder
 func (s *FolderServiceImpl) RemoveModelFromFolder(modelID string) error {
-	result := s.db.Where("model_id = ?", modelID).Delete(&FolderModelAssociation{})
-	if result.Error != nil {
-		return fmt.Errorf("failed to remove model from folder: %w", result.Error)
+	if err := s.db.Exec("UPDATE models SET folder_id = NULL WHERE id = ?", modelID).Error; err != nil {
+		return fmt.Errorf("failed to remove model from folder: %w", err)
 	}
 	return nil
 }
 
 // GetModelFolder gets the folder a model belongs to (if directly in a folder)
 func (s *FolderServiceImpl) GetModelFolder(modelID string) (*Folder, error) {
-	var fm FolderModelAssociation
-	if err := s.db.Where("model_id = ?", modelID).First(&fm).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil // Model has no folder
-		}
+	var folderID *string
+	if err := s.db.Table("models").Where("id = ?", modelID).Pluck("folder_id", &folderID).Error; err != nil {
 		return nil, fmt.Errorf("failed to get model folder: %w", err)
 	}
-	return s.GetFolder(fm.FolderID)
+
+	if folderID == nil {
+		return nil, nil // Model has no folder
+	}
+
+	return s.GetFolder(*folderID)
 }
 
 // GetModelsInFolder gets all model IDs directly in a folder
 func (s *FolderServiceImpl) GetModelsInFolder(folderID string) ([]string, error) {
-	var fms []FolderModelAssociation
-	if err := s.db.Where("folder_id = ?", folderID).Find(&fms).Error; err != nil {
+	var modelIDs []string
+	if err := s.db.Table("models").Where("folder_id = ?", folderID).Pluck("id", &modelIDs).Error; err != nil {
 		return nil, fmt.Errorf("failed to get models in folder: %w", err)
-	}
-
-	modelIDs := make([]string, len(fms))
-	for i, fm := range fms {
-		modelIDs[i] = fm.ModelID
 	}
 	return modelIDs, nil
 }
@@ -1072,20 +971,19 @@ func (s *FolderServiceImpl) GetAllDescendantModels(folderID string) ([]string, e
 		return nil, err
 	}
 
-	// Get models from projects in this folder and all descendant folders
-	// UNION with models directly in folders
+	// Get models in projects within this folder and descendants, plus models directly in folders
 	var modelIDs []string
 	if err := s.db.Raw(`
-		SELECT pm.model_id 
-		FROM project_models pm
-		INNER JOIN projects p ON p.id = pm.project_id
+		SELECT m.id FROM models m
+		WHERE m.project_id IN (
+			SELECT p.id FROM projects p
 		INNER JOIN folders f ON f.id = p.folder_id
 		WHERE f.path LIKE ? OR f.id = ?
-		UNION
-		SELECT fm.model_id
-		FROM folder_models fm
-		INNER JOIN folders f ON f.id = fm.folder_id
-		WHERE f.path LIKE ? OR f.id = ?
+		)
+		OR m.folder_id IN (
+			SELECT f.id FROM folders f
+			WHERE f.path LIKE ? OR f.id = ?
+		)
 	`, folder.Path+"/%", folderID, folder.Path+"/%", folderID).Scan(&modelIDs).Error; err != nil {
 		return nil, fmt.Errorf("failed to get descendant models: %w", err)
 	}
@@ -1100,20 +998,19 @@ func (s *FolderServiceImpl) GetAllDescendantBuilds(folderID string) ([]string, e
 		return nil, err
 	}
 
-	// Get builds from projects in this folder and all descendant folders
-	// UNION with builds directly in folders
+	// Get builds in projects within this folder and descendants, plus builds directly in folders
 	var buildIDs []string
 	if err := s.db.Raw(`
-		SELECT pb.build_id 
-		FROM project_builds pb
-		INNER JOIN projects p ON p.id = pb.project_id
+		SELECT mb.id FROM model_builds mb
+		WHERE mb.project_id IN (
+			SELECT p.id FROM projects p
 		INNER JOIN folders f ON f.id = p.folder_id
 		WHERE f.path LIKE ? OR f.id = ?
-		UNION
-		SELECT fb.build_id
-		FROM folder_builds fb
-		INNER JOIN folders f ON f.id = fb.folder_id
-		WHERE f.path LIKE ? OR f.id = ?
+		)
+		OR mb.folder_id IN (
+			SELECT f.id FROM folders f
+			WHERE f.path LIKE ? OR f.id = ?
+		)
 	`, folder.Path+"/%", folderID, folder.Path+"/%", folderID).Scan(&buildIDs).Error; err != nil {
 		return nil, fmt.Errorf("failed to get descendant builds: %w", err)
 	}
@@ -1194,9 +1091,9 @@ func GetModels() []interface{} {
 	return []interface{}{
 		&FolderModel{},
 		&ProjectModel{},
-		&ProjectModelAssociation{},
-		&ProjectBuildAssociation{},
-		&FolderBuildAssociation{},
-		&FolderModelAssociation{},
 	}
 }
+
+
+
+

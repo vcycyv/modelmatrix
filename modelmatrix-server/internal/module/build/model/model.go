@@ -12,20 +12,22 @@ import (
 
 // ModelBuildModel is the GORM model for model builds
 type ModelBuildModel struct {
-	ID           string         `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	Name         string         `gorm:"type:varchar(255);not null;uniqueIndex:idx_build_name"`
-	Description  string         `gorm:"type:text"`
-	DatasourceID string         `gorm:"type:uuid;not null;index:idx_build_datasource"`
-	ModelType    string         `gorm:"type:varchar(50);not null"`
-	Status       string         `gorm:"type:varchar(50);not null;default:'pending';index:idx_build_status"`
-	Parameters   JSONMap        `gorm:"type:jsonb"`
-	Metrics      JSONMap        `gorm:"type:jsonb"`
-	ErrorMessage string         `gorm:"type:text"`
+	ID           string     `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	Name         string     `gorm:"type:varchar(255);not null;uniqueIndex:idx_build_name"`
+	Description  string     `gorm:"type:text"`
+	DatasourceID string     `gorm:"type:uuid;not null;index:idx_build_datasource"`
+	ProjectID    *string    `gorm:"type:uuid;index:idx_build_project"`  // Belongs to project (one-to-many)
+	FolderID     *string    `gorm:"type:uuid;index:idx_build_folder"`   // Belongs to folder directly (one-to-many)
+	ModelType    string     `gorm:"type:varchar(50);not null"`
+	Status       string     `gorm:"type:varchar(50);not null;default:'pending';index:idx_build_status"`
+	Parameters   JSONMap    `gorm:"type:jsonb"`
+	Metrics      JSONMap    `gorm:"type:jsonb"`
+	ErrorMessage string     `gorm:"type:text"`
 	StartedAt    *time.Time
 	CompletedAt  *time.Time
-	CreatedBy string    `gorm:"type:varchar(255);not null"`
-	CreatedAt time.Time `gorm:"autoCreateTime"`
-	UpdatedAt time.Time `gorm:"autoUpdateTime"`
+	CreatedBy    string    `gorm:"type:varchar(255);not null"`
+	CreatedAt    time.Time `gorm:"autoCreateTime"`
+	UpdatedAt    time.Time `gorm:"autoUpdateTime"`
 }
 
 // TableName returns the table name for ModelBuildModel

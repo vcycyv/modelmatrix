@@ -45,7 +45,7 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 
 function AppRoutes() {
   return (
-    <Routes>
+      <Routes>
       <Route
         path="/login"
         element={
@@ -63,7 +63,7 @@ function AppRoutes() {
         }
       />
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      </Routes>
   );
 }
 

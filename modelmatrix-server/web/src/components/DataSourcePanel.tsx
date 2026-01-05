@@ -15,11 +15,10 @@ interface Datasource {
   name: string;
   description?: string;
   collection_id: string;
-  source_type: string;
+  collection_name?: string;
+  type: string;
   file_path?: string;
-  row_count?: number;
-  column_count?: number;
-  status: string;
+  column_count: number;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -27,6 +26,7 @@ interface Datasource {
 
 interface DataSourcePanelProps {
   onSelect?: (item: { type: 'collection' | 'datasource'; data: Collection | Datasource }) => void;
+  refreshTrigger?: number;
 }
 
 // API functions (simplified - should be moved to api.ts)
@@ -43,11 +43,31 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
     (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
   }
   const response = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.msg || data.error || 'Request failed');
+  
+  // Handle empty responses (e.g., 204 No Content from DELETE)
+  const contentType = response.headers.get('content-type');
+  const hasJsonContent = contentType && contentType.includes('application/json');
+  const text = await response.text();
+  
+  let data: Record<string, unknown> | null = null;
+  if (text && hasJsonContent) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = null;
+    }
   }
-  return data.data ?? data;
+  
+  if (!response.ok) {
+    const errorMessage = data?.msg || data?.error || data?.message || 'Request failed';
+    throw new Error(String(errorMessage));
+  }
+  
+  if (!data) {
+    return {} as T;
+  }
+  
+  return (data.data ?? data) as T;
 }
 
 interface CollectionListResponse {
@@ -313,48 +333,135 @@ function CreateCollectionDialog({
   );
 }
 
+// Column role options
+const COLUMN_ROLES = [
+  { value: 'input', label: 'Input', description: 'Feature used for prediction' },
+  { value: 'target', label: 'Target', description: 'Variable to predict' },
+  { value: 'ignore', label: 'Ignore', description: 'Excluded from model' },
+] as const;
+
+interface ColumnWithRole {
+  id: string;
+  name: string;
+  data_type: string;
+  role: string;
+}
+
 function UploadFileDialog({
   isOpen,
   onClose,
   onSuccess,
   collection,
+  collections,
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (collectionId: string) => void;
   collection: Collection | null;
+  collections?: Collection[];
 }) {
+  const [step, setStep] = useState<'upload' | 'configure'>('upload');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string>(collection?.id || '');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Column configuration state
+  const [datasourceId, setDatasourceId] = useState<string | null>(null);
+  const [columns, setColumns] = useState<ColumnWithRole[]>([]);
+  const [isSavingRoles, setIsSavingRoles] = useState(false);
+
+  // Reset selected collection when dialog opens
+  useEffect(() => {
+    if (isOpen) {
+      setStep('upload');
+      setSelectedCollectionId(collection?.id || '');
+      setName('');
+      setDescription('');
+      setFile(null);
+      setError('');
+      setDatasourceId(null);
+      setColumns([]);
+    }
+  }, [isOpen, collection?.id]);
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
-      setFile(selectedFile);
-      if (!name) {
-        // Auto-fill name from filename
-        setName(selectedFile.name.replace(/\.[^/.]+$/, ''));
-      }
+      handleFileSelected(selectedFile);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleFileSelected = (selectedFile: File) => {
+    // Validate file type
+    const validTypes = ['.csv', '.parquet'];
+    const fileExt = selectedFile.name.toLowerCase().slice(selectedFile.name.lastIndexOf('.'));
+    if (!validTypes.includes(fileExt)) {
+      setError('Please select a CSV or Parquet file');
+      return;
+    }
+    
+    setFile(selectedFile);
+    setError('');
+    if (!name) {
+      // Auto-fill name from filename
+      setName(selectedFile.name.replace(/\.[^/.]+$/, ''));
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-    if (!file || !collection) return;
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const droppedFile = e.dataTransfer.files?.[0];
+    if (droppedFile) {
+      handleFileSelected(droppedFile);
+    }
+  };
+
+  const handleUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!file || !selectedCollectionId) return;
 
     setError('');
     setIsLoading(true);
     try {
-      await datasourceApi.upload(collection.id, file, name, description);
-      onSuccess();
-      onClose();
-      setName('');
-      setDescription('');
-      setFile(null);
+      const result = await datasourceApi.upload(selectedCollectionId, file, name, description);
+      setDatasourceId(result.id);
+      
+      // Fetch columns for the new datasource
+      const token = localStorage.getItem('token');
+      const response = await fetch(`/api/datasources/${result.id}/columns`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      });
+      const data = await response.json();
+      const columnsData = data.data || data || [];
+      
+      setColumns(columnsData.map((col: { id: string; name: string; data_type: string; role?: string }) => ({
+        id: col.id,
+        name: col.name,
+        data_type: col.data_type,
+        role: col.role || 'input',
+      })));
+      
+      setStep('configure');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to upload file');
     } finally {
@@ -362,47 +469,282 @@ function UploadFileDialog({
     }
   };
 
-  if (!isOpen || !collection) return null;
+  const handleColumnRoleChange = (columnId: string, role: string) => {
+    setColumns((prev) =>
+      prev.map((col) =>
+        col.id === columnId ? { ...col, role } : col
+      )
+    );
+  };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-        <h2 className="text-lg font-semibold text-slate-900 mb-4">
-          Upload Data File to "{collection.name}"
-        </h2>
-        <form onSubmit={handleSubmit}>
+  const handleSaveRoles = async () => {
+    if (!datasourceId) return;
+
+    // Validate: exactly one target column
+    const targetCount = columns.filter((c) => c.role === 'target').length;
+    if (targetCount === 0) {
+      setError('Please select exactly one target column');
+      return;
+    }
+    if (targetCount > 1) {
+      setError('Only one target column is allowed');
+      return;
+    }
+
+    setError('');
+    setIsSavingRoles(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`/api/datasources/${datasourceId}/columns/roles`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          columns: columns.map((col) => ({
+            column_id: col.id,
+            role: col.role,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.msg || data.error || 'Failed to save column roles');
+      }
+
+      onSuccess(selectedCollectionId);
+      handleClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save column roles');
+    } finally {
+      setIsSavingRoles(false);
+    }
+  };
+
+  const handleSkipConfiguration = () => {
+    onSuccess(selectedCollectionId);
+    handleClose();
+  };
+
+  const handleClose = () => {
+    setStep('upload');
+    setName('');
+    setDescription('');
+    setFile(null);
+    setError('');
+    setSelectedCollectionId('');
+    setDatasourceId(null);
+    setColumns([]);
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  // Step 2: Configure column roles
+  if (step === 'configure') {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-6 max-h-[90vh] flex flex-col">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Configure Columns</h2>
+              <p className="text-sm text-slate-500">Set the role for each column in your dataset</p>
+            </div>
+            <div className="flex items-center space-x-2 text-xs">
+              <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded">Input</span>
+              <span className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded">Target</span>
+              <span className="px-2 py-1 bg-slate-100 text-slate-500 rounded">Ignore</span>
+            </div>
+          </div>
+
           {error && (
             <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
               {error}
             </div>
           )}
+
+          <div className="flex-1 overflow-auto border border-slate-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 sticky top-0">
+                <tr>
+                  <th className="text-left px-4 py-2 font-medium text-slate-600">Column</th>
+                  <th className="text-left px-4 py-2 font-medium text-slate-600">Type</th>
+                  <th className="text-left px-4 py-2 font-medium text-slate-600">Role</th>
+                </tr>
+              </thead>
+              <tbody>
+                {columns.map((col, index) => (
+                  <tr key={col.id} className={index % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                    <td className="px-4 py-2">
+                      <code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded">{col.name}</code>
+                    </td>
+                    <td className="px-4 py-2 text-slate-500 text-xs">{col.data_type}</td>
+                    <td className="px-4 py-2">
+                      <div className="flex space-x-1">
+                        {COLUMN_ROLES.map((role) => (
+                          <button
+                            key={role.value}
+                            type="button"
+                            onClick={() => handleColumnRoleChange(col.id, role.value)}
+                            className={`px-2 py-1 text-xs rounded transition-colors ${
+                              col.role === role.value
+                                ? role.value === 'target'
+                                  ? 'bg-emerald-500 text-white'
+                                  : role.value === 'ignore'
+                                  ? 'bg-slate-400 text-white'
+                                  : 'bg-blue-500 text-white'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                            title={role.description}
+                          >
+                            {role.label}
+                          </button>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-200">
+            <div className="text-xs text-slate-500">
+              {columns.filter((c) => c.role === 'input').length} inputs, 
+              {' '}{columns.filter((c) => c.role === 'target').length} target,
+              {' '}{columns.filter((c) => c.role === 'ignore').length} ignored
+            </div>
+            <div className="flex space-x-3">
+              <button
+                type="button"
+                onClick={handleSkipConfiguration}
+                className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                Skip (use defaults)
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveRoles}
+                disabled={isSavingRoles}
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center"
+              >
+                {isSavingRoles ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Saving...
+                  </>
+                ) : (
+                  'Save & Continue'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Step 1: Upload file
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+        <h2 className="text-lg font-semibold text-slate-900 mb-4">
+          {collection ? `Upload to "${collection.name}"` : 'Upload Data File'}
+        </h2>
+        <form onSubmit={handleUpload}>
+          {error && (
+            <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
+              {error}
+            </div>
+          )}
+          
+          {/* Collection selector (shown when no collection is pre-selected) */}
+          {!collection && collections && collections.length > 0 && (
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-700 mb-1">Collection</label>
+              <select
+                value={selectedCollectionId}
+                onChange={(e) => setSelectedCollectionId(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                required
+              >
+                <option value="">Select a collection...</option>
+                {collections.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {!collection && (!collections || collections.length === 0) && (
+            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm">
+              No collections found. Please create a collection first.
+            </div>
+          )}
+
           <div className="mb-4">
             <label className="block text-sm font-medium text-slate-700 mb-1">File</label>
             <div
-              className="border-2 border-dashed border-slate-300 rounded-lg p-4 text-center cursor-pointer hover:border-blue-400 transition-colors"
+              className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                isDragging 
+                  ? 'border-blue-500 bg-blue-50' 
+                  : file 
+                    ? 'border-emerald-400 bg-emerald-50' 
+                    : 'border-slate-300 hover:border-blue-400'
+              }`}
               onClick={() => fileInputRef.current?.click()}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
             >
               {file ? (
-                <div className="text-sm text-slate-700">
-                  <span className="font-medium">{file.name}</span>
-                  <span className="text-slate-400 ml-2">
-                    ({(file.size / 1024 / 1024).toFixed(2)} MB)
-                  </span>
+                <div className="text-sm">
+                  <div className="flex items-center justify-center text-emerald-600 mb-1">
+                    <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <span className="font-medium text-slate-700">{file.name}</span>
+                  <div className="text-slate-400 text-xs mt-1">
+                    {(file.size / 1024 / 1024).toFixed(2)} MB
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFile(null);
+                      setName('');
+                    }}
+                    className="mt-2 text-xs text-slate-500 hover:text-red-500 underline"
+                  >
+                    Remove
+                  </button>
                 </div>
               ) : (
                 <div className="text-sm text-slate-500">
-                  Click to select a CSV file
+                  <svg className="w-10 h-10 mx-auto mb-2 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                  </svg>
+                  <p className="font-medium">Drop your file here</p>
+                  <p className="text-xs text-slate-400 mt-1">or click to browse</p>
+                  <p className="text-xs text-slate-400 mt-2">Supports CSV and Parquet files</p>
                 </div>
               )}
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".csv"
+                accept=".csv,.parquet"
                 onChange={handleFileChange}
                 className="hidden"
               />
             </div>
           </div>
+          
           <div className="mb-4">
             <label className="block text-sm font-medium text-slate-700 mb-1">Name</label>
             <input
@@ -414,6 +756,7 @@ function UploadFileDialog({
               required
             />
           </div>
+          
           <div className="mb-4">
             <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
             <textarea
@@ -424,20 +767,36 @@ function UploadFileDialog({
               rows={2}
             />
           </div>
+          
           <div className="flex justify-end space-x-3">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className="px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={isLoading || !file}
-              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              disabled={isLoading || !file || !selectedCollectionId}
+              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center"
             >
-              {isLoading ? 'Uploading...' : 'Upload'}
+              {isLoading ? (
+                <>
+                  <svg className="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                  </svg>
+                  Upload & Configure
+                </>
+              )}
             </button>
           </div>
         </form>
@@ -447,7 +806,7 @@ function UploadFileDialog({
 }
 
 // Main DataSourcePanel Component
-export default function DataSourcePanel({ onSelect }: DataSourcePanelProps) {
+export default function DataSourcePanel({ onSelect, refreshTrigger }: DataSourcePanelProps) {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [datasourcesByCollection, setDatasourcesByCollection] = useState<Record<string, Datasource[]>>({});
@@ -474,19 +833,42 @@ export default function DataSourcePanel({ onSelect }: DataSourcePanelProps) {
     }
   }, []);
 
-  useEffect(() => {
-    loadCollections();
-  }, [loadCollections]);
-
   // Load datasources for a collection
-  const loadDatasources = async (collectionId: string) => {
+  const loadDatasources = useCallback(async (collectionId: string) => {
     try {
       const datasources = await datasourceApi.listByCollection(collectionId);
       setDatasourcesByCollection((prev) => ({ ...prev, [collectionId]: datasources }));
     } catch (error) {
       console.error('Failed to load datasources:', error);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadCollections();
+  }, [loadCollections, refreshTrigger]);
+
+  // Reload all expanded collections' datasources when refreshTrigger changes
+  useEffect(() => {
+    if (refreshTrigger !== undefined && refreshTrigger > 0) {
+      expandedIds.forEach((collectionId) => {
+        loadDatasources(collectionId);
+      });
+    }
+  }, [refreshTrigger, expandedIds, loadDatasources]);
+
+  // Refresh all: reload collections and all expanded collections' datasources
+  const handleRefreshAll = useCallback(async () => {
+    await loadCollections();
+    // After collections are loaded, refresh all expanded ones
+    expandedIds.forEach((collectionId) => {
+      loadDatasources(collectionId);
+    });
+  }, [loadCollections, expandedIds, loadDatasources]);
+
+  // Refresh a single collection's datasources
+  const handleRefreshCollection = useCallback((collectionId: string) => {
+    loadDatasources(collectionId);
+  }, [loadDatasources]);
 
   // Toggle collection expansion
   const handleToggle = (collection: Collection) => {
@@ -572,6 +954,10 @@ export default function DataSourcePanel({ onSelect }: DataSourcePanelProps) {
         },
       });
       items.push({
+        label: 'Refresh',
+        onClick: () => handleRefreshCollection(contextMenu.collection!.id),
+      });
+      items.push({
         label: 'Delete Collection',
         onClick: () => handleDeleteCollection(contextMenu.collection!),
         danger: true,
@@ -633,6 +1019,18 @@ export default function DataSourcePanel({ onSelect }: DataSourcePanelProps) {
         <h2 className="text-sm font-semibold text-slate-700">Data Sources</h2>
         <div className="flex items-center space-x-1">
           <button
+            onClick={() => {
+              setUploadCollection(null);
+              setUploadFileOpen(true);
+            }}
+            className="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors"
+            title="Upload Data File"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            </svg>
+          </button>
+          <button
             onClick={() => setCreateCollectionOpen(true)}
             className="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors"
             title="New Collection"
@@ -642,9 +1040,9 @@ export default function DataSourcePanel({ onSelect }: DataSourcePanelProps) {
             </svg>
           </button>
           <button
-            onClick={loadCollections}
+            onClick={handleRefreshAll}
             className="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors"
-            title="Refresh"
+            title="Refresh All"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -695,12 +1093,14 @@ export default function DataSourcePanel({ onSelect }: DataSourcePanelProps) {
           setUploadFileOpen(false);
           setUploadCollection(null);
         }}
-        onSuccess={() => {
-          if (uploadCollection) {
-            loadDatasources(uploadCollection.id);
-          }
+        onSuccess={(collectionId: string) => {
+          // Refresh the datasources for the collection that was uploaded to
+          loadDatasources(collectionId);
+          // Expand the collection to show the new datasource
+          setExpandedIds((prev) => new Set([...prev, collectionId]));
         }}
         collection={uploadCollection}
+        collections={collections}
       />
     </div>
   );

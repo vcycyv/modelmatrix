@@ -17,6 +17,8 @@ type ModelModel struct {
 	Description  string    `gorm:"type:text"`
 	BuildID      string    `gorm:"type:uuid;not null;index:idx_model_build"`
 	DatasourceID string    `gorm:"type:uuid;not null;index:idx_model_datasource"`
+	ProjectID    *string   `gorm:"type:uuid;index:idx_model_project"`  // Belongs to project (one-to-many)
+	FolderID     *string   `gorm:"type:uuid;index:idx_model_folder"`   // Belongs to folder directly (one-to-many)
 	Algorithm    string    `gorm:"type:varchar(100);not null"`
 	ModelType    string    `gorm:"type:varchar(50);not null"` // classification, regression
 	TargetColumn string    `gorm:"type:varchar(255);not null"`

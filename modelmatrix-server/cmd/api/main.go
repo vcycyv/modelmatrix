@@ -166,6 +166,9 @@ func main() {
 	// Register model manage routes
 	modelController.RegisterRoutes(api, authMiddleware)
 
+	// --- Folder Module (initialized early as it's needed by build service) ---
+	folderSvc := folderservice.NewFolderService(database)
+
 	// --- Model Build Module ---
 	buildDomainService := buildDomain.NewService()
 	buildRepo := buildRepo.NewBuildRepository(database)
@@ -173,14 +176,13 @@ func main() {
 	// Initialize compute service client
 	computeClient := compute.NewClient(&cfg.Compute)
 
-	buildService := buildApp.NewBuildService(buildRepo, buildDomainService, computeClient, datasourceService, modelService, cfg)
+	buildService := buildApp.NewBuildService(buildRepo, buildDomainService, computeClient, datasourceService, modelService, folderSvc, cfg)
 	buildController := buildApi.NewBuildController(buildService)
 
 	// Register model build routes
 	buildController.RegisterRoutes(api, authMiddleware)
 
-	// --- Folder Module ---
-	folderSvc := folderservice.NewFolderService(database)
+	// --- Folder Controller ---
 	folderController := folderApi.NewFolderController(folderSvc, buildService, modelService)
 
 	// Register folder routes

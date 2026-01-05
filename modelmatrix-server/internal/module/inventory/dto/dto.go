@@ -52,6 +52,8 @@ type ModelResponse struct {
 	Description  string                 `json:"description" example:"Random forest model for sales prediction"`
 	BuildID      string                 `json:"build_id" example:"550e8400-e29b-41d4-a716-446655440001"`
 	DatasourceID string                 `json:"datasource_id" example:"550e8400-e29b-41d4-a716-446655440002"`
+	ProjectID    *string                `json:"project_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440003"`
+	FolderID     *string                `json:"folder_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440004"`
 	Algorithm    string                 `json:"algorithm" example:"random_forest"`
 	ModelType    string                 `json:"model_type" example:"classification"`
 	TargetColumn string                 `json:"target_column" example:"BAD"`
@@ -152,6 +154,8 @@ type CreateModelFromBuildRequest struct {
 	Name          string
 	Description   string
 	DatasourceID  string
+	ProjectID     *string // Inherits from build
+	FolderID      *string // Inherits from build
 	Algorithm     string
 	ModelType     string
 	TargetColumn  string

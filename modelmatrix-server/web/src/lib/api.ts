@@ -47,13 +47,32 @@ async function request<T>(
     throw new Error('Unauthorized');
   }
 
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.error || data.message || 'Request failed');
+  // Handle empty responses (e.g., 204 No Content from DELETE)
+  const contentType = response.headers.get('content-type');
+  const hasJsonContent = contentType && contentType.includes('application/json');
+  const text = await response.text();
+  
+  let data: Record<string, unknown> | null = null;
+  if (text && hasJsonContent) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      // If JSON parsing fails, treat as empty response
+      data = null;
+    }
   }
 
-  return data.data ?? data;
+  if (!response.ok) {
+    const errorMessage = data?.error || data?.message || data?.msg || 'Request failed';
+    throw new Error(String(errorMessage));
+  }
+
+  // Return empty object for void responses
+  if (!data) {
+    return {} as T;
+  }
+
+  return (data.data ?? data) as T;
 }
 
 // Login response from backend (flat structure)
@@ -123,12 +142,19 @@ export const projectApi = {
 };
 
 // Model Build API
+export interface UpdateBuildRequest {
+  name?: string;
+  description?: string;
+}
+
 export const buildApi = {
   getBuildsInProject: (projectId: string) => request<ModelBuild[]>(`/projects/${projectId}/builds`),
   list: () => request<{ builds: ModelBuild[]; total: number }>('/builds'),
   get: (id: string) => request<ModelBuild>(`/builds/${id}`),
   create: (data: CreateBuildRequest) =>
     request<ModelBuild>('/builds', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: UpdateBuildRequest) =>
+    request<ModelBuild>(`/builds/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   start: (id: string) => request<ModelBuild>(`/builds/${id}/start`, { method: 'POST' }),
   cancel: (id: string) => request<ModelBuild>(`/builds/${id}/cancel`, { method: 'POST' }),
   delete: (id: string) => request<void>(`/builds/${id}`, { method: 'DELETE' }),
@@ -153,6 +179,23 @@ export const datasourceApi = {
   },
   get: (id: string) => request<Datasource>(`/datasources/${id}`),
   getColumns: (id: string) => request<Column[]>(`/datasources/${id}/columns`),
+  delete: (id: string) => request<void>(`/datasources/${id}`, { method: 'DELETE' }),
+  updateColumnRoles: (id: string, columns: { column_id: string; role: string }[]) =>
+    request<Column[]>(`/datasources/${id}/columns/roles`, {
+      method: 'PUT',
+      body: JSON.stringify({ columns }),
+    }),
+};
+
+export const collectionApi = {
+  list: async () => {
+    const result = await request<{ collections: Collection[]; total: number }>('/collections');
+    return result.collections || [];
+  },
+  get: (id: string) => request<Collection>(`/collections/${id}`),
+  create: (data: { name: string; description?: string }) => 
+    request<Collection>('/collections', { method: 'POST', body: JSON.stringify(data) }),
+  delete: (id: string) => request<void>(`/collections/${id}`, { method: 'DELETE' }),
 };
 
 // Types
@@ -190,6 +233,8 @@ export interface ModelBuild {
   name: string;
   description?: string;
   datasource_id: string;
+  project_id?: string;
+  folder_id?: string;
   model_type: string;
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
   parameters?: Record<string, unknown>;
@@ -208,6 +253,8 @@ export interface Model {
   description?: string;
   build_id: string;
   datasource_id: string;
+  project_id?: string;
+  folder_id?: string;
   algorithm: string;
   model_type: string;
   target_column: string;
@@ -245,6 +292,8 @@ export interface CreateBuildRequest {
   name: string;
   description?: string;
   datasource_id: string;
+  project_id?: string;  // Belongs to project (one-to-many)
+  folder_id?: string;   // Belongs to folder (one-to-many)
   model_type: string;
   parameters?: {
     algorithm?: string;
@@ -256,14 +305,24 @@ export interface CreateBuildRequest {
   };
 }
 
+export interface Collection {
+  id: string;
+  name: string;
+  description?: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Datasource {
   id: string;
   name: string;
   description?: string;
   type: string;
-  collection_id?: string;
-  row_count?: number;
-  status: string;
+  collection_id: string;
+  collection_name?: string;
+  file_path?: string;
+  column_count: number;
   created_by: string;
   created_at: string;
   updated_at: string;

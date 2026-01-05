@@ -88,6 +88,8 @@ type Model struct {
 	Description  string
 	BuildID      string       // Reference to the build that created this model
 	DatasourceID string       // Reference to the datasource used for training
+	ProjectID    *string      // Belongs to project (one-to-many)
+	FolderID     *string      // Belongs to folder directly (one-to-many)
 	Algorithm    string       // Algorithm used (random_forest, xgboost, etc.)
 	ModelType    string       // classification, regression, clustering
 	TargetColumn string       // Target column name

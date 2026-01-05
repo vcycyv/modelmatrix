@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react';
 import Dialog from './Dialog';
-import { buildApi, datasourceApi, projectApi, folderApi, Datasource, Column } from '../lib/api';
+import { buildApi, datasourceApi, Datasource, Column } from '../lib/api';
 
 interface BuildModelDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
-  // Either projectId OR folderId should be provided
   projectId?: string;
   projectName?: string;
   folderId?: string;
@@ -15,27 +14,26 @@ interface BuildModelDialogProps {
 
 const MODEL_TYPES = [
   { value: 'classification', label: 'Classification', defaultAlgorithm: 'random_forest' },
-  { value: 'regression', label: 'Regression', defaultAlgorithm: 'gradient_boosting' },
-  { value: 'clustering', label: 'Clustering', defaultAlgorithm: 'kmeans' },
+  { value: 'regression', label: 'Regression', defaultAlgorithm: 'random_forest' },
+  { value: 'clustering', label: 'Clustering', defaultAlgorithm: 'decision_tree' },
 ];
 
+// Backend only supports: decision_tree, random_forest, xgboost
 const ALGORITHMS = {
   classification: [
+    { value: 'decision_tree', label: 'Decision Tree' },
     { value: 'random_forest', label: 'Random Forest' },
-    { value: 'logistic_regression', label: 'Logistic Regression' },
     { value: 'xgboost', label: 'XGBoost' },
-    { value: 'svm', label: 'Support Vector Machine' },
   ],
   regression: [
-    { value: 'gradient_boosting', label: 'Gradient Boosting' },
+    { value: 'decision_tree', label: 'Decision Tree' },
     { value: 'random_forest', label: 'Random Forest' },
-    { value: 'linear_regression', label: 'Linear Regression' },
     { value: 'xgboost', label: 'XGBoost' },
   ],
   clustering: [
-    { value: 'kmeans', label: 'K-Means' },
-    { value: 'dbscan', label: 'DBSCAN' },
-    { value: 'hierarchical', label: 'Hierarchical' },
+    { value: 'decision_tree', label: 'Decision Tree' },
+    { value: 'random_forest', label: 'Random Forest' },
+    { value: 'xgboost', label: 'XGBoost' },
   ],
 };
 
@@ -48,10 +46,10 @@ export default function BuildModelDialog({
   folderId,
   folderName,
 }: BuildModelDialogProps) {
-  // Determine context (project or folder)
   const isProjectContext = !!projectId;
   const contextName = isProjectContext ? projectName : folderName;
   const contextType = isProjectContext ? 'project' : 'folder';
+
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [datasourceId, setDatasourceId] = useState('');
@@ -60,21 +58,19 @@ export default function BuildModelDialog({
   const [trainTestSplit, setTrainTestSplit] = useState(0.8);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showColumns, setShowColumns] = useState(false);
 
-  // Data sources and columns
   const [datasources, setDatasources] = useState<Datasource[]>([]);
   const [columns, setColumns] = useState<Column[]>([]);
   const [loadingDatasources, setLoadingDatasources] = useState(false);
   const [loadingColumns, setLoadingColumns] = useState(false);
 
-  // Load datasources when dialog opens
   useEffect(() => {
     if (isOpen) {
       loadDatasources();
     }
   }, [isOpen]);
 
-  // Load columns when datasource changes
   useEffect(() => {
     if (datasourceId) {
       loadColumns(datasourceId);
@@ -83,7 +79,6 @@ export default function BuildModelDialog({
     }
   }, [datasourceId]);
 
-  // Update algorithm when model type changes
   useEffect(() => {
     const typeConfig = MODEL_TYPES.find((t) => t.value === modelType);
     if (typeConfig) {
@@ -122,24 +117,19 @@ export default function BuildModelDialog({
     setError('');
 
     try {
-      // Create the build
-      const build = await buildApi.create({
+      // Create build with project_id or folder_id directly (no need for separate association call)
+      await buildApi.create({
         name,
         description,
         datasource_id: datasourceId,
+        project_id: projectId,
+        folder_id: folderId,
         model_type: modelType,
         parameters: {
           algorithm,
           train_test_split: trainTestSplit,
         },
       });
-
-      // Associate build with project or folder
-      if (projectId) {
-        await projectApi.addBuild(projectId, build.id);
-      } else if (folderId) {
-        await folderApi.addBuild(folderId, build.id);
-      }
 
       onSuccess();
       handleClose();
@@ -159,123 +149,109 @@ export default function BuildModelDialog({
     setTrainTestSplit(0.8);
     setError('');
     setColumns([]);
+    setShowColumns(false);
     onClose();
   };
 
   return (
     <Dialog isOpen={isOpen} onClose={handleClose} title="Build Model">
-      <form onSubmit={handleSubmit} className="space-y-5">
-        {/* Context info */}
-        <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
-          <p className="text-sm text-slate-600">
-            Building model in {contextType}: <span className="font-medium text-slate-800">{contextName}</span>
-          </p>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Context badge */}
+        <div className="inline-flex items-center px-2.5 py-1 bg-slate-100 rounded-full text-xs text-slate-600">
+          <span className="capitalize">{contextType}:</span>
+          <span className="ml-1 font-medium text-slate-800">{contextName}</span>
         </div>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+          <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded text-sm">
             {error}
           </div>
         )}
 
-        {/* Build name */}
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1.5">
-            Build Name <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g., Sales Predictor v1"
-            className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-            required
-          />
+        {/* Row 1: Name + Data Source */}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">
+              Build Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g., forest_v1"
+              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">
+              Data Source <span className="text-red-500">*</span>
+            </label>
+            <div className="flex gap-1">
+              <select
+                value={datasourceId}
+                onChange={(e) => setDatasourceId(e.target.value)}
+                className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                required
+              >
+                <option value="">{loadingDatasources ? 'Loading...' : 'Select...'}</option>
+                {datasources.map((ds) => (
+                  <option key={ds.id} value={ds.id}>
+                    {ds.name}
+                  </option>
+                ))}
+              </select>
+              {datasourceId && (
+                <button
+                  type="button"
+                  onClick={() => setShowColumns(!showColumns)}
+                  className="px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded border border-slate-300"
+                  title="View columns"
+                >
+                  {loadingColumns ? '...' : `${columns.length} cols`}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* Description */}
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1.5">
-            Description
-          </label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Describe the purpose of this model build..."
-            rows={2}
-            className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all resize-none"
-          />
-        </div>
-
-        {/* Datasource selection */}
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1.5">
-            Data Source <span className="text-red-500">*</span>
-          </label>
-          <select
-            value={datasourceId}
-            onChange={(e) => setDatasourceId(e.target.value)}
-            className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-            required
-          >
-            <option value="">
-              {loadingDatasources ? 'Loading...' : 'Select a data source'}
-            </option>
-            {datasources.map((ds) => (
-              <option key={ds.id} value={ds.id}>
-                {ds.name} ({ds.type}) - {ds.row_count?.toLocaleString() || '?'} rows
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Show columns preview if datasource selected */}
-        {datasourceId && (
-          <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
-            <p className="text-sm font-medium text-slate-700 mb-2">Data Columns</p>
-            {loadingColumns ? (
-              <p className="text-sm text-slate-500">Loading columns...</p>
-            ) : columns.length > 0 ? (
-              <div className="max-h-32 overflow-y-auto">
-                <div className="flex flex-wrap gap-1.5">
-                  {columns.map((col) => (
-                    <span
-                      key={col.id}
-                      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                        col.role === 'target'
-                          ? 'bg-green-100 text-green-800'
-                          : col.role === 'exclude'
-                          ? 'bg-gray-100 text-gray-500 line-through'
-                          : 'bg-blue-100 text-blue-800'
-                      }`}
-                    >
-                      {col.name}
-                      <span className="ml-1 text-xs opacity-60">({col.data_type})</span>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-slate-500">No columns found</p>
-            )}
+        {/* Collapsible columns preview */}
+        {showColumns && columns.length > 0 && (
+          <div className="bg-slate-50 rounded p-2 border border-slate-200 max-h-24 overflow-y-auto">
+            <div className="flex flex-wrap gap-1">
+              {columns.map((col) => (
+                <span
+                  key={col.id}
+                  className={`px-1.5 py-0.5 rounded text-xs ${
+                    col.role === 'target'
+                      ? 'bg-green-100 text-green-700'
+                      : col.role === 'exclude'
+                      ? 'bg-gray-100 text-gray-400 line-through'
+                      : 'bg-blue-50 text-blue-700'
+                  }`}
+                >
+                  {col.name}
+                </span>
+              ))}
+            </div>
           </div>
         )}
 
-        {/* Model type */}
+        {/* Model Type - full width */}
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1.5">
+          <label className="block text-xs font-medium text-slate-600 mb-1">
             Model Type <span className="text-red-500">*</span>
           </label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="flex rounded-md border border-slate-300 overflow-hidden">
             {MODEL_TYPES.map((type) => (
               <button
                 key={type.value}
                 type="button"
                 onClick={() => setModelType(type.value as typeof modelType)}
-                className={`px-3 py-2 text-sm font-medium rounded-lg border transition-all ${
+                className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${
                   modelType === type.value
-                    ? 'border-blue-500 bg-blue-50 text-blue-700'
-                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-slate-600 hover:bg-slate-50'
                 }`}
               >
                 {type.label}
@@ -286,13 +262,13 @@ export default function BuildModelDialog({
 
         {/* Algorithm */}
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1.5">
+          <label className="block text-xs font-medium text-slate-600 mb-1">
             Algorithm <span className="text-red-500">*</span>
           </label>
           <select
             value={algorithm}
             onChange={(e) => setAlgorithm(e.target.value)}
-            className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
             required
           >
             {ALGORITHMS[modelType].map((alg) => (
@@ -303,45 +279,52 @@ export default function BuildModelDialog({
           </select>
         </div>
 
-        {/* Training parameters */}
-        <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
-          <p className="text-sm font-medium text-slate-700 mb-3">Training Parameters</p>
-          
-          <div className="space-y-3">
-            <div>
-              <label className="block text-sm text-slate-600 mb-1">
-                Train/Test Split: {Math.round(trainTestSplit * 100)}% / {Math.round((1 - trainTestSplit) * 100)}%
-              </label>
-              <input
-                type="range"
-                min="0.5"
-                max="0.95"
-                step="0.05"
-                value={trainTestSplit}
-                onChange={(e) => setTrainTestSplit(parseFloat(e.target.value))}
-                className="w-full accent-blue-600"
-              />
-              <div className="flex justify-between text-xs text-slate-500">
-                <span>50% Train</span>
-                <span>95% Train</span>
-              </div>
-            </div>
+        {/* Row 3: Train/Test Split (compact) */}
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-xs font-medium text-slate-600">Train/Test Split</label>
+            <span className="text-xs text-slate-500 font-mono">
+              {Math.round(trainTestSplit * 100)}% / {Math.round((1 - trainTestSplit) * 100)}%
+            </span>
           </div>
+          <input
+            type="range"
+            min="0.5"
+            max="0.95"
+            step="0.05"
+            value={trainTestSplit}
+            onChange={(e) => setTrainTestSplit(parseFloat(e.target.value))}
+            className="w-full h-1.5 accent-blue-600"
+          />
+        </div>
+
+        {/* Description (optional, collapsed by default) */}
+        <div>
+          <label className="block text-xs font-medium text-slate-600 mb-1">
+            Description <span className="text-slate-400">(optional)</span>
+          </label>
+          <input
+            type="text"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Brief description..."
+            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+          />
         </div>
 
         {/* Actions */}
-        <div className="flex justify-end space-x-3 pt-2">
+        <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
           <button
             type="button"
             onClick={handleClose}
-            className="px-4 py-2.5 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+            className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={isLoading || !name || !datasourceId}
-            className="px-4 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {isLoading ? 'Creating...' : 'Create Build'}
           </button>
@@ -350,4 +333,3 @@ export default function BuildModelDialog({
     </Dialog>
   );
 }
-
