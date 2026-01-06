@@ -125,8 +125,8 @@ export default function BuildModelDialog({
         project_id: projectId,
         folder_id: folderId,
         model_type: modelType,
+        algorithm,
         parameters: {
-          algorithm,
           train_test_split: trainTestSplit,
         },
       });

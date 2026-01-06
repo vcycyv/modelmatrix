@@ -518,7 +518,7 @@ function DatasourceDetails({ datasource }: { datasource: Datasource }) {
                     {error}
                   </div>
                 )}
-                <div className="border border-slate-200 rounded-lg overflow-hidden max-h-64 overflow-auto">
+                <div className="border border-slate-200 rounded-lg overflow-hidden">
                   <table className="w-full text-xs">
                     <thead className="bg-slate-50 sticky top-0">
                       <tr>

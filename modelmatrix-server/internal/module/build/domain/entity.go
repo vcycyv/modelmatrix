@@ -8,11 +8,11 @@ import (
 type BuildStatus string
 
 const (
-	BuildStatusPending    BuildStatus = "pending"
-	BuildStatusRunning    BuildStatus = "running"
-	BuildStatusCompleted  BuildStatus = "completed"
-	BuildStatusFailed     BuildStatus = "failed"
-	BuildStatusCancelled  BuildStatus = "cancelled"
+	BuildStatusPending   BuildStatus = "pending"
+	BuildStatusRunning   BuildStatus = "running"
+	BuildStatusCompleted BuildStatus = "completed"
+	BuildStatusFailed    BuildStatus = "failed"
+	BuildStatusCancelled BuildStatus = "cancelled"
 )
 
 // IsValid checks if the build status is valid
@@ -55,9 +55,10 @@ type ModelBuild struct {
 	Name         string
 	Description  string
 	DatasourceID string
-	ProjectID    *string  // Belongs to project (one-to-many)
-	FolderID     *string  // Belongs to folder directly (one-to-many)
+	ProjectID    *string // Belongs to project (one-to-many)
+	FolderID     *string // Belongs to folder directly (one-to-many)
 	ModelType    ModelType
+	Algorithm    string // ML algorithm (decision_tree, random_forest, xgboost)
 	Status       BuildStatus
 	Parameters   TrainingParameters
 	Metrics      *BuildMetrics
@@ -69,9 +70,9 @@ type ModelBuild struct {
 	UpdatedAt    time.Time
 }
 
-// TrainingParameters holds ML training configuration
+// TrainingParameters holds ML training configuration (hyperparameters only)
+// Note: Algorithm is stored in dedicated ModelBuild.Algorithm field, not here
 type TrainingParameters struct {
-	Algorithm       string                 `json:"algorithm"`
 	Hyperparameters map[string]interface{} `json:"hyperparameters"`
 	TrainTestSplit  float64                `json:"train_test_split"`
 	RandomSeed      int                    `json:"random_seed"`
@@ -130,4 +131,3 @@ func (b *ModelBuild) Cancel() {
 	b.Status = BuildStatusCancelled
 	b.CompletedAt = &now
 }
-

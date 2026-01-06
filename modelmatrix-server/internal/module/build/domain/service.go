@@ -79,6 +79,7 @@ func (s *Service) ValidateParameters(params *TrainingParameters) error {
 }
 
 // GetDefaultParameters returns default training parameters for a model type
+// Note: Algorithm is now a separate field on ModelBuild, not in TrainingParameters
 func (s *Service) GetDefaultParameters(modelType ModelType) TrainingParameters {
 	params := TrainingParameters{
 		TrainTestSplit:  0.8,
@@ -88,17 +89,15 @@ func (s *Service) GetDefaultParameters(modelType ModelType) TrainingParameters {
 		Hyperparameters: make(map[string]interface{}),
 	}
 
+	// Set default hyperparameters based on model type
 	switch modelType {
 	case ModelTypeClassification:
-		params.Algorithm = "random_forest"
 		params.Hyperparameters["n_estimators"] = 100
 		params.Hyperparameters["max_depth"] = 10
 	case ModelTypeRegression:
-		params.Algorithm = "gradient_boosting"
 		params.Hyperparameters["n_estimators"] = 100
 		params.Hyperparameters["learning_rate"] = 0.1
 	case ModelTypeClustering:
-		params.Algorithm = "kmeans"
 		params.Hyperparameters["n_clusters"] = 5
 	}
 

@@ -12,12 +12,13 @@ type CreateBuildRequest struct {
 	ProjectID    *string                    `json:"project_id,omitempty" binding:"omitempty,uuid" example:"550e8400-e29b-41d4-a716-446655440002"`
 	FolderID     *string                    `json:"folder_id,omitempty" binding:"omitempty,uuid" example:"550e8400-e29b-41d4-a716-446655440003"`
 	ModelType    string                     `json:"model_type" binding:"required,oneof=classification regression clustering" example:"regression"`
+	Algorithm    string                     `json:"algorithm" binding:"required,oneof=decision_tree random_forest xgboost" example:"random_forest"`
 	Parameters   *TrainingParametersRequest `json:"parameters,omitempty"`
 }
 
-// TrainingParametersRequest represents training parameters
+// TrainingParametersRequest represents training parameters (hyperparameters only)
+// Note: Algorithm is now a separate top-level field in CreateBuildRequest
 type TrainingParametersRequest struct {
-	Algorithm       string                 `json:"algorithm" example:"random_forest"`
 	Hyperparameters map[string]interface{} `json:"hyperparameters,omitempty"`
 	TrainTestSplit  float64                `json:"train_test_split" example:"0.8"`
 	RandomSeed      int                    `json:"random_seed" example:"42"`
@@ -41,6 +42,7 @@ type BuildResponse struct {
 	ProjectID      *string                     `json:"project_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440002"`
 	FolderID       *string                     `json:"folder_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440003"`
 	ModelType      string                      `json:"model_type" example:"regression"`
+	Algorithm      string                      `json:"algorithm" example:"random_forest"`
 	Status         string                      `json:"status" example:"completed"`
 	Parameters     *TrainingParametersResponse `json:"parameters,omitempty"`
 	Metrics        *MetricsResponse            `json:"metrics,omitempty"`
@@ -53,8 +55,8 @@ type BuildResponse struct {
 }
 
 // TrainingParametersResponse represents training parameters in responses
+// Note: Algorithm is now a separate top-level field in BuildResponse
 type TrainingParametersResponse struct {
-	Algorithm       string                 `json:"algorithm" example:"random_forest"`
 	Hyperparameters map[string]interface{} `json:"hyperparameters,omitempty"`
 	TrainTestSplit  float64                `json:"train_test_split" example:"0.8"`
 	RandomSeed      int                    `json:"random_seed" example:"42"`

@@ -19,6 +19,7 @@ type ModelBuildModel struct {
 	ProjectID    *string    `gorm:"type:uuid;index:idx_build_project"`  // Belongs to project (one-to-many)
 	FolderID     *string    `gorm:"type:uuid;index:idx_build_folder"`   // Belongs to folder directly (one-to-many)
 	ModelType    string     `gorm:"type:varchar(50);not null"`
+	Algorithm    string     `gorm:"type:varchar(50);not null;default:'decision_tree';index:idx_build_algorithm"`
 	Status       string     `gorm:"type:varchar(50);not null;default:'pending';index:idx_build_status"`
 	Parameters   JSONMap    `gorm:"type:jsonb"`
 	Metrics      JSONMap    `gorm:"type:jsonb"`

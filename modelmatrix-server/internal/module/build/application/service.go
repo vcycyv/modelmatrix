@@ -69,9 +69,6 @@ func (s *BuildServiceImpl) Create(req *dto.CreateBuildRequest, createdBy string)
 
 	// Override with request parameters if provided
 	if req.Parameters != nil {
-		if req.Parameters.Algorithm != "" {
-			params.Algorithm = req.Parameters.Algorithm
-		}
 		if req.Parameters.Hyperparameters != nil {
 			params.Hyperparameters = req.Parameters.Hyperparameters
 		}
@@ -96,6 +93,7 @@ func (s *BuildServiceImpl) Create(req *dto.CreateBuildRequest, createdBy string)
 		ProjectID:    req.ProjectID,
 		FolderID:     req.FolderID,
 		ModelType:    modelType,
+		Algorithm:    req.Algorithm,
 		Status:       domain.BuildStatusPending,
 		Parameters:   params,
 		CreatedBy:    createdBy,
@@ -279,7 +277,7 @@ func (s *BuildServiceImpl) Start(id string) (*dto.BuildResponse, error) {
 		DatasourceID:    build.DatasourceID,
 		BuildID:         build.ID,
 		FilePath:        filePath,
-		Algorithm:       build.Parameters.Algorithm,
+		Algorithm:       build.Algorithm,
 		Hyperparameters: build.Parameters.Hyperparameters,
 		TargetColumn:    targetColumn,
 		InputColumns:    inputColumns,
@@ -461,7 +459,7 @@ func (s *BuildServiceImpl) createModelFromBuild(build *domain.ModelBuild, callba
 		DatasourceID:  build.DatasourceID,
 		ProjectID:     build.ProjectID,
 		FolderID:      build.FolderID,
-		Algorithm:     build.Parameters.Algorithm,
+		Algorithm:     build.Algorithm,
 		ModelType:     string(build.ModelType),
 		TargetColumn:  targetColumn,
 		InputColumns:  inputColumns,
@@ -526,6 +524,7 @@ func toBuildResponse(build *domain.ModelBuild) *dto.BuildResponse {
 		ProjectID:    build.ProjectID,
 		FolderID:     build.FolderID,
 		ModelType:    string(build.ModelType),
+		Algorithm:    build.Algorithm,
 		Status:       string(build.Status),
 		ErrorMessage: build.ErrorMessage,
 		StartedAt:    build.StartedAt,
@@ -536,7 +535,6 @@ func toBuildResponse(build *domain.ModelBuild) *dto.BuildResponse {
 	}
 
 	resp.Parameters = &dto.TrainingParametersResponse{
-		Algorithm:       build.Parameters.Algorithm,
 		Hyperparameters: build.Parameters.Hyperparameters,
 		TrainTestSplit:  build.Parameters.TrainTestSplit,
 		RandomSeed:      build.Parameters.RandomSeed,

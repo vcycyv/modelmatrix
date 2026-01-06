@@ -236,6 +236,7 @@ export interface ModelBuild {
   project_id?: string;
   folder_id?: string;
   model_type: string;
+  algorithm: string;
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
   parameters?: Record<string, unknown>;
   metrics?: Record<string, number>;
@@ -295,8 +296,8 @@ export interface CreateBuildRequest {
   project_id?: string;  // Belongs to project (one-to-many)
   folder_id?: string;   // Belongs to folder (one-to-many)
   model_type: string;
+  algorithm: string;    // ML algorithm: decision_tree, random_forest, xgboost
   parameters?: {
-    algorithm?: string;
     hyperparameters?: Record<string, unknown>;
     train_test_split?: number;
     random_seed?: number;
