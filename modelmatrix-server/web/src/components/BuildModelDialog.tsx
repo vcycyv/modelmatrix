@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import Dialog from './Dialog';
-import { buildApi, datasourceApi, Datasource, Column } from '../lib/api';
+import { buildApi, datasourceApi, collectionApi, Datasource, Column, Collection } from '../lib/api';
 
 interface BuildModelDialogProps {
   isOpen: boolean;
@@ -13,27 +13,30 @@ interface BuildModelDialogProps {
 }
 
 const MODEL_TYPES = [
-  { value: 'classification', label: 'Classification', defaultAlgorithm: 'random_forest' },
-  { value: 'regression', label: 'Regression', defaultAlgorithm: 'random_forest' },
-  { value: 'clustering', label: 'Clustering', defaultAlgorithm: 'decision_tree' },
+  { value: 'classification', label: 'Classification', defaultAlgorithm: 'random_forest', enabled: true },
+  { value: 'regression', label: 'Regression', defaultAlgorithm: 'linear_regression', enabled: true },
+  { value: 'clustering', label: 'Clustering', defaultAlgorithm: 'kmeans', enabled: true },
 ];
 
-// Backend only supports: decision_tree, random_forest, xgboost
-const ALGORITHMS = {
+// Algorithms available per model type
+// Classification: tree-based classifiers
+// Regression: linear models + tree-based regressors
+// Clustering: requires separate implementation
+const ALGORITHMS: Record<string, { value: string; label: string }[]> = {
   classification: [
     { value: 'decision_tree', label: 'Decision Tree' },
     { value: 'random_forest', label: 'Random Forest' },
     { value: 'xgboost', label: 'XGBoost' },
   ],
   regression: [
+    { value: 'linear_regression', label: 'Linear Regression' },
+    { value: 'polynomial_regression', label: 'Polynomial Regression' },
     { value: 'decision_tree', label: 'Decision Tree' },
     { value: 'random_forest', label: 'Random Forest' },
     { value: 'xgboost', label: 'XGBoost' },
   ],
   clustering: [
-    { value: 'decision_tree', label: 'Decision Tree' },
-    { value: 'random_forest', label: 'Random Forest' },
-    { value: 'xgboost', label: 'XGBoost' },
+    { value: 'kmeans', label: 'K-Means' },
   ],
 };
 
@@ -52,6 +55,7 @@ export default function BuildModelDialog({
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [collectionId, setCollectionId] = useState('');
   const [datasourceId, setDatasourceId] = useState('');
   const [modelType, setModelType] = useState<'classification' | 'regression' | 'clustering'>('classification');
   const [algorithm, setAlgorithm] = useState('random_forest');
@@ -60,17 +64,36 @@ export default function BuildModelDialog({
   const [error, setError] = useState('');
   const [showColumns, setShowColumns] = useState(false);
 
+  const [collections, setCollections] = useState<Collection[]>([]);
   const [datasources, setDatasources] = useState<Datasource[]>([]);
+  const [filteredDatasources, setFilteredDatasources] = useState<Datasource[]>([]);
   const [columns, setColumns] = useState<Column[]>([]);
+  const [loadingCollections, setLoadingCollections] = useState(false);
   const [loadingDatasources, setLoadingDatasources] = useState(false);
   const [loadingColumns, setLoadingColumns] = useState(false);
 
+  // Load collections when dialog opens
   useEffect(() => {
     if (isOpen) {
+      loadCollections();
       loadDatasources();
     }
   }, [isOpen]);
 
+  // Filter datasources when collection changes
+  useEffect(() => {
+    if (collectionId) {
+      setFilteredDatasources(datasources.filter(ds => ds.collection_id === collectionId));
+      setDatasourceId(''); // Reset datasource selection
+      setColumns([]);
+    } else {
+      setFilteredDatasources([]);
+      setDatasourceId('');
+      setColumns([]);
+    }
+  }, [collectionId, datasources]);
+
+  // Load columns when datasource changes
   useEffect(() => {
     if (datasourceId) {
       loadColumns(datasourceId);
@@ -79,12 +102,52 @@ export default function BuildModelDialog({
     }
   }, [datasourceId]);
 
+  // Auto-detect model type based on target column data type
+  useEffect(() => {
+    if (columns.length === 0) return;
+
+    const targetColumn = columns.find(col => col.role === 'target');
+    
+    if (!targetColumn) {
+      // No target column → Clustering
+      setModelType('clustering');
+    } else {
+      // Determine model type based on target column data type
+      const dataType = targetColumn.data_type?.toLowerCase() || '';
+      
+      if (dataType.includes('int') || dataType.includes('float') || dataType === 'float64' || dataType === 'int64') {
+        // Numeric target → Regression (could also be classification for discrete integers)
+        // Check if it looks like a categorical integer (e.g., 0/1 for binary classification)
+        // For now, default numeric to regression; user can change if needed
+        setModelType('regression');
+      } else if (dataType === 'boolean' || dataType === 'bool') {
+        // Boolean → Classification
+        setModelType('classification');
+      } else {
+        // String/object/categorical → Classification
+        setModelType('classification');
+      }
+    }
+  }, [columns]);
+
   useEffect(() => {
     const typeConfig = MODEL_TYPES.find((t) => t.value === modelType);
     if (typeConfig) {
       setAlgorithm(typeConfig.defaultAlgorithm);
     }
   }, [modelType]);
+
+  const loadCollections = async () => {
+    setLoadingCollections(true);
+    try {
+      const data = await collectionApi.list();
+      setCollections(data);
+    } catch (err) {
+      console.error('Failed to load collections:', err);
+    } finally {
+      setLoadingCollections(false);
+    }
+  };
 
   const loadDatasources = async () => {
     setLoadingDatasources(true);
@@ -143,6 +206,7 @@ export default function BuildModelDialog({
   const handleClose = () => {
     setName('');
     setDescription('');
+    setCollectionId('');
     setDatasourceId('');
     setModelType('classification');
     setAlgorithm('random_forest');
@@ -168,20 +232,40 @@ export default function BuildModelDialog({
           </div>
         )}
 
-        {/* Row 1: Name + Data Source */}
+        {/* Row 1: Name */}
+        <div>
+          <label className="block text-xs font-medium text-slate-600 mb-1">
+            Build Name <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g., forest_v1"
+            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+            required
+          />
+        </div>
+
+        {/* Row 2: Collection + Data Source */}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">
-              Build Name <span className="text-red-500">*</span>
+              Collection <span className="text-red-500">*</span>
             </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g., forest_v1"
+            <select
+              value={collectionId}
+              onChange={(e) => setCollectionId(e.target.value)}
               className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
               required
-            />
+            >
+              <option value="">{loadingCollections ? 'Loading...' : 'Select collection...'}</option>
+              {collections.map((col) => (
+                <option key={col.id} value={col.id}>
+                  {col.name}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">
@@ -193,9 +277,12 @@ export default function BuildModelDialog({
                 onChange={(e) => setDatasourceId(e.target.value)}
                 className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 required
+                disabled={!collectionId}
               >
-                <option value="">{loadingDatasources ? 'Loading...' : 'Select...'}</option>
-                {datasources.map((ds) => (
+                <option value="">
+                  {!collectionId ? 'Select collection first' : loadingDatasources ? 'Loading...' : 'Select datasource...'}
+                </option>
+                {filteredDatasources.map((ds) => (
                   <option key={ds.id} value={ds.id}>
                     {ds.name}
                   </option>
@@ -239,19 +326,34 @@ export default function BuildModelDialog({
 
         {/* Model Type - full width */}
         <div>
-          <label className="block text-xs font-medium text-slate-600 mb-1">
-            Model Type <span className="text-red-500">*</span>
-          </label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-xs font-medium text-slate-600">
+              Model Type <span className="text-red-500">*</span>
+            </label>
+            {columns.length > 0 && (
+              <span className="text-xs text-slate-400">
+                {(() => {
+                  const targetCol = columns.find(c => c.role === 'target');
+                  if (!targetCol) return 'No target → Clustering';
+                  return `Target: ${targetCol.name} (${targetCol.data_type})`;
+                })()}
+              </span>
+            )}
+          </div>
           <div className="flex rounded-md border border-slate-300 overflow-hidden">
             {MODEL_TYPES.map((type) => (
               <button
                 key={type.value}
                 type="button"
-                onClick={() => setModelType(type.value as typeof modelType)}
+                onClick={() => type.enabled && setModelType(type.value as typeof modelType)}
+                disabled={!type.enabled}
+                title={!type.enabled ? 'Coming soon' : undefined}
                 className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${
                   modelType === type.value
                     ? 'bg-blue-600 text-white'
-                    : 'bg-white text-slate-600 hover:bg-slate-50'
+                    : type.enabled
+                    ? 'bg-white text-slate-600 hover:bg-slate-50'
+                    : 'bg-slate-100 text-slate-400 cursor-not-allowed'
                 }`}
               >
                 {type.label}

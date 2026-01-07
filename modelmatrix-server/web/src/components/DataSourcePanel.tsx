@@ -218,9 +218,9 @@ function CollectionItem({
                 <FileIcon />
               </span>
               <span className="truncate text-sm">{ds.name}</span>
-              {ds.row_count && (
+              {ds.column_count > 0 && (
                 <span className="ml-auto text-xs text-slate-400">
-                  {ds.row_count.toLocaleString()} rows
+                  {ds.column_count} cols
                 </span>
               )}
             </div>

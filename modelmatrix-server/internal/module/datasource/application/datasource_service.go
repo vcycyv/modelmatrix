@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"modelmatrix-server/internal/infrastructure/fileservice"
@@ -393,7 +394,7 @@ func (s *DatasourceServiceImpl) extractColumnsFromFile(dsType domain.DatasourceT
 	}
 }
 
-// extractColumnsFromCSV extracts column names from CSV header
+// extractColumnsFromCSV extracts column names and infers data types from CSV
 func (s *DatasourceServiceImpl) extractColumnsFromCSV(reader io.Reader) ([]domain.Column, error) {
 	csvReader := csv.NewReader(reader)
 	headers, err := csvReader.Read()
@@ -401,14 +402,77 @@ func (s *DatasourceServiceImpl) extractColumnsFromCSV(reader io.Reader) ([]domai
 		return nil, fmt.Errorf("failed to read CSV header: %w", err)
 	}
 
+	// Read sample rows to infer types (up to 100 rows)
+	const maxSampleRows = 100
+	sampleData := make([][]string, 0, maxSampleRows)
+	for i := 0; i < maxSampleRows; i++ {
+		row, err := csvReader.Read()
+		if err != nil {
+			break // EOF or error, stop reading
+		}
+		sampleData = append(sampleData, row)
+	}
+
 	columns := make([]domain.Column, len(headers))
 	for i, header := range headers {
+		dataType := inferColumnType(sampleData, i)
 		columns[i] = domain.Column{
 			Name:     strings.TrimSpace(header),
-			DataType: "string", // Default to string, can be updated later
+			DataType: dataType,
 			Role:     domain.ColumnRoleInput,
 		}
 	}
 
 	return columns, nil
+}
+
+// inferColumnType infers the data type of a column from sample values
+func inferColumnType(rows [][]string, colIndex int) string {
+	if len(rows) == 0 {
+		return "string"
+	}
+
+	var hasInt, hasFloat, hasBool, hasString bool
+	nonEmptyCount := 0
+
+	for _, row := range rows {
+		if colIndex >= len(row) {
+			continue
+		}
+		val := strings.TrimSpace(row[colIndex])
+		if val == "" {
+			continue // Skip empty values
+		}
+		nonEmptyCount++
+
+		// Try to parse as different types
+		if _, err := strconv.ParseInt(val, 10, 64); err == nil {
+			hasInt = true
+		} else if _, err := strconv.ParseFloat(val, 64); err == nil {
+			hasFloat = true
+		} else if strings.EqualFold(val, "true") || strings.EqualFold(val, "false") {
+			hasBool = true
+		} else {
+			hasString = true
+		}
+	}
+
+	// If any value is a non-numeric string, the column is string type
+	if hasString {
+		return "string"
+	}
+	// If we have booleans and nothing else, it's boolean
+	if hasBool && !hasInt && !hasFloat {
+		return "boolean"
+	}
+	// If we have any floats, the column is float (even if some look like ints)
+	if hasFloat {
+		return "float64"
+	}
+	// If all values are integers
+	if hasInt {
+		return "int64"
+	}
+	// Default to string if no data or all empty
+	return "string"
 }

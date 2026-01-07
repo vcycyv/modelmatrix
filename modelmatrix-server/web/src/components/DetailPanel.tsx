@@ -76,6 +76,9 @@ export default function DetailPanel({ node, dataNode, onEdit, onDelete, onBuildM
     );
   }
 
+  // At this point, node must exist (displayNode is set and dataNode is not)
+  if (!node) return null;
+
   return (
     <div className="bg-white rounded-lg shadow-sm border border-slate-200">
       {/* Header */}

@@ -278,6 +278,7 @@ func (s *BuildServiceImpl) Start(id string) (*dto.BuildResponse, error) {
 		BuildID:         build.ID,
 		FilePath:        filePath,
 		Algorithm:       build.Algorithm,
+		ModelType:       string(build.ModelType),
 		Hyperparameters: build.Parameters.Hyperparameters,
 		TargetColumn:    targetColumn,
 		InputColumns:    inputColumns,

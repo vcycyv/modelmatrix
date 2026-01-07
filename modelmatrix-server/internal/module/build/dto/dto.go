@@ -12,7 +12,7 @@ type CreateBuildRequest struct {
 	ProjectID    *string                    `json:"project_id,omitempty" binding:"omitempty,uuid" example:"550e8400-e29b-41d4-a716-446655440002"`
 	FolderID     *string                    `json:"folder_id,omitempty" binding:"omitempty,uuid" example:"550e8400-e29b-41d4-a716-446655440003"`
 	ModelType    string                     `json:"model_type" binding:"required,oneof=classification regression clustering" example:"regression"`
-	Algorithm    string                     `json:"algorithm" binding:"required,oneof=decision_tree random_forest xgboost" example:"random_forest"`
+	Algorithm    string                     `json:"algorithm" binding:"required,oneof=decision_tree random_forest xgboost linear_regression polynomial_regression kmeans" example:"random_forest"`
 	Parameters   *TrainingParametersRequest `json:"parameters,omitempty"`
 }
 

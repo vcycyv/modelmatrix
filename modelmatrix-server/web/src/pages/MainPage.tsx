@@ -7,6 +7,7 @@ import FolderDialog from '../components/FolderDialog';
 import ProjectDialog from '../components/ProjectDialog';
 import BuildModelDialog from '../components/BuildModelDialog';
 import BuildEditDialog from '../components/BuildEditDialog';
+import ModelEditDialog from '../components/ModelEditDialog';
 import ConfirmDialog from '../components/ConfirmDialog';
 import DataSourcePanel from '../components/DataSourcePanel';
 import { folderApi, projectApi, buildApi, modelApi, datasourceApi, collectionApi, Folder, Project, ModelBuild, Model, Collection, Datasource } from '../lib/api';
@@ -60,6 +61,11 @@ export default function MainPage() {
   const [buildEditDialog, setBuildEditDialog] = useState<{
     isOpen: boolean;
     build?: ModelBuild;
+  }>({ isOpen: false });
+
+  const [modelEditDialog, setModelEditDialog] = useState<{
+    isOpen: boolean;
+    model?: Model;
   }>({ isOpen: false });
 
   // Refresh tree
@@ -396,6 +402,8 @@ export default function MainPage() {
       setProjectDialog({ isOpen: true, project: selectedNode.data as Project });
     } else if (selectedNode.type === 'build') {
       setBuildEditDialog({ isOpen: true, build: selectedNode.data as ModelBuild });
+    } else if (selectedNode.type === 'model') {
+      setModelEditDialog({ isOpen: true, model: selectedNode.data as Model });
     }
   };
 
@@ -716,6 +724,30 @@ export default function MainPage() {
           }
         }}
         build={buildEditDialog.build}
+      />
+
+      {/* Model Edit Dialog */}
+      <ModelEditDialog
+        isOpen={modelEditDialog.isOpen}
+        onClose={() => setModelEditDialog({ isOpen: false })}
+        onSuccess={() => {
+          // Targeted refresh based on parent
+          const model = modelEditDialog.model;
+          if (model?.folder_id) {
+            setRefreshNode({ id: model.folder_id, type: 'folder' });
+          } else if (model?.project_id) {
+            setRefreshNode({ id: model.project_id, type: 'project' });
+          } else {
+            refresh();
+          }
+          // Refresh selected node if it's the edited model
+          if (selectedNode?.type === 'model' && model?.id === selectedNode.id) {
+            modelApi.get(selectedNode.id).then((updatedModel) => {
+              setSelectedNode({ ...selectedNode, name: updatedModel.name, data: updatedModel });
+            });
+          }
+        }}
+        model={modelEditDialog.model}
       />
     </Layout>
   );

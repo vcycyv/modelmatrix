@@ -165,6 +165,8 @@ export const modelApi = {
   getModelsInProject: (projectId: string) => request<Model[]>(`/projects/${projectId}/models`),
   list: () => request<{ models: Model[]; total: number }>('/models'),
   get: (id: string) => request<Model>(`/models/${id}`),
+  update: (id: string, data: { name?: string; description?: string }) =>
+    request<Model>(`/models/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   activate: (id: string) => request<Model>(`/models/${id}/activate`, { method: 'POST' }),
   deactivate: (id: string) => request<Model>(`/models/${id}/deactivate`, { method: 'POST' }),
   delete: (id: string) => request<void>(`/models/${id}`, { method: 'DELETE' }),

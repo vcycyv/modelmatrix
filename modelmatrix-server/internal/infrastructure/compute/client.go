@@ -25,6 +25,7 @@ type TrainRequest struct {
 	BuildID         string                 `json:"build_id"`
 	FilePath        string                 `json:"file_path"`
 	Algorithm       string                 `json:"algorithm"`
+	ModelType       string                 `json:"model_type"` // classification, regression, clustering
 	Hyperparameters map[string]interface{} `json:"hyperparameters"`
 	TargetColumn    string                 `json:"target_column"`
 	InputColumns    []string               `json:"input_columns"`
