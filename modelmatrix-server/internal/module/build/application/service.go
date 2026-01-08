@@ -6,11 +6,11 @@ import (
 
 	"modelmatrix-server/internal/infrastructure/compute"
 	"modelmatrix-server/internal/infrastructure/folderservice"
-	dsApp "modelmatrix-server/internal/module/datasource/application"
-	dsDomain "modelmatrix-server/internal/module/datasource/domain"
 	"modelmatrix-server/internal/module/build/domain"
 	"modelmatrix-server/internal/module/build/dto"
 	"modelmatrix-server/internal/module/build/repository"
+	dsApp "modelmatrix-server/internal/module/datasource/application"
+	dsDomain "modelmatrix-server/internal/module/datasource/domain"
 	invApp "modelmatrix-server/internal/module/inventory/application"
 	invDto "modelmatrix-server/internal/module/inventory/dto"
 	"modelmatrix-server/pkg/config"
@@ -435,14 +435,14 @@ func (s *BuildServiceImpl) createModelFromBuild(build *domain.ModelBuild, callba
 		return fmt.Errorf("failed to get datasource: %w", err)
 	}
 
-	// Find input columns
-	var inputColumns []string
+	// Find target column from datasource
 	var targetColumn string
+	var datasourceInputColumns []string
 	for _, col := range datasourceDetail.Columns {
-		if col.Role == string(dsDomain.ColumnRoleInput) {
-			inputColumns = append(inputColumns, col.Name)
-		} else if col.Role == string(dsDomain.ColumnRoleTarget) {
+		if col.Role == string(dsDomain.ColumnRoleTarget) {
 			targetColumn = col.Name
+		} else if col.Role == string(dsDomain.ColumnRoleInput) {
+			datasourceInputColumns = append(datasourceInputColumns, col.Name)
 		}
 	}
 
@@ -451,6 +451,15 @@ func (s *BuildServiceImpl) createModelFromBuild(build *domain.ModelBuild, callba
 	if callback.ModelPath != nil {
 		modelFilePath = *callback.ModelPath
 	}
+
+	// Model input columns come from callback (subset of datasource input columns)
+	// If not provided, fall back to datasource input columns
+	modelInputColumns := callback.FeatureNames
+	if len(modelInputColumns) == 0 {
+		modelInputColumns = datasourceInputColumns
+	}
+
+	logger.Info("Model uses %d input variables (datasource has %d)", len(modelInputColumns), len(datasourceInputColumns))
 
 	// Create model with the same project/folder as the build
 	createReq := &invDto.CreateModelFromBuildRequest{
@@ -463,7 +472,7 @@ func (s *BuildServiceImpl) createModelFromBuild(build *domain.ModelBuild, callba
 		Algorithm:     build.Algorithm,
 		ModelType:     string(build.ModelType),
 		TargetColumn:  targetColumn,
-		InputColumns:  inputColumns,
+		InputColumns:  modelInputColumns,
 		ModelFilePath: modelFilePath,
 		Metrics:       callback.Metrics,
 		CreatedBy:     build.CreatedBy,

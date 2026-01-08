@@ -6,14 +6,14 @@ import (
 
 // CreateModelRequest represents request to create a model (usually from build completion)
 type CreateModelRequest struct {
-	Name         string                 `json:"name" binding:"required,min=1,max=255" example:"Sales Predictor"`
-	Description  string                 `json:"description" binding:"max=1000" example:"Random forest model for sales prediction"`
-	BuildID      string                 `json:"build_id" binding:"required,uuid" example:"550e8400-e29b-41d4-a716-446655440000"`
-	DatasourceID string                 `json:"datasource_id" binding:"required,uuid" example:"550e8400-e29b-41d4-a716-446655440001"`
-	Algorithm    string                 `json:"algorithm" binding:"required" example:"random_forest"`
-	ModelType    string                 `json:"model_type" binding:"required,oneof=classification regression clustering" example:"classification"`
-	TargetColumn string                 `json:"target_column" binding:"required" example:"BAD"`
-	Metrics      map[string]interface{} `json:"metrics,omitempty"`
+	Name         string                  `json:"name" binding:"required,min=1,max=255" example:"Sales Predictor"`
+	Description  string                  `json:"description" binding:"max=1000" example:"Random forest model for sales prediction"`
+	BuildID      string                  `json:"build_id" binding:"required,uuid" example:"550e8400-e29b-41d4-a716-446655440000"`
+	DatasourceID string                  `json:"datasource_id" binding:"required,uuid" example:"550e8400-e29b-41d4-a716-446655440001"`
+	Algorithm    string                  `json:"algorithm" binding:"required" example:"random_forest"`
+	ModelType    string                  `json:"model_type" binding:"required,oneof=classification regression clustering" example:"classification"`
+	TargetColumn string                  `json:"target_column" binding:"required" example:"BAD"`
+	Metrics      map[string]interface{}  `json:"metrics,omitempty"`
 	Variables    []CreateVariableRequest `json:"variables,omitempty"`
 	Files        []CreateFileRequest     `json:"files,omitempty"`
 }
@@ -47,22 +47,22 @@ type UpdateModelRequest struct {
 
 // ModelResponse represents a model in responses
 type ModelResponse struct {
-	ID           string                 `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
-	Name         string                 `json:"name" example:"Sales Predictor"`
-	Description  string                 `json:"description" example:"Random forest model for sales prediction"`
-	BuildID      string                 `json:"build_id" example:"550e8400-e29b-41d4-a716-446655440001"`
-	DatasourceID string                 `json:"datasource_id" example:"550e8400-e29b-41d4-a716-446655440002"`
-	ProjectID    *string                `json:"project_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440003"`
-	FolderID     *string                `json:"folder_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440004"`
-	Algorithm    string                 `json:"algorithm" example:"random_forest"`
-	ModelType    string                 `json:"model_type" example:"classification"`
-	TargetColumn string                 `json:"target_column" example:"BAD"`
-	Status       string                 `json:"status" example:"active"`
-	Metrics      *MetricsResponse       `json:"metrics,omitempty"`
-	Version      int                    `json:"version" example:"1"`
-	CreatedBy    string                 `json:"created_by" example:"admin"`
-	CreatedAt    time.Time              `json:"created_at" example:"2024-01-15T10:30:00Z"`
-	UpdatedAt    time.Time              `json:"updated_at" example:"2024-01-15T10:30:00Z"`
+	ID           string           `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Name         string           `json:"name" example:"Sales Predictor"`
+	Description  string           `json:"description" example:"Random forest model for sales prediction"`
+	BuildID      string           `json:"build_id" example:"550e8400-e29b-41d4-a716-446655440001"`
+	DatasourceID string           `json:"datasource_id" example:"550e8400-e29b-41d4-a716-446655440002"`
+	ProjectID    *string          `json:"project_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440003"`
+	FolderID     *string          `json:"folder_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440004"`
+	Algorithm    string           `json:"algorithm" example:"random_forest"`
+	ModelType    string           `json:"model_type" example:"classification"`
+	TargetColumn string           `json:"target_column" example:"BAD"`
+	Status       string           `json:"status" example:"active"`
+	Metrics      *MetricsResponse `json:"metrics,omitempty"`
+	Version      int              `json:"version" example:"1"`
+	CreatedBy    string           `json:"created_by" example:"admin"`
+	CreatedAt    time.Time        `json:"created_at" example:"2024-01-15T10:30:00Z"`
+	UpdatedAt    time.Time        `json:"updated_at" example:"2024-01-15T10:30:00Z"`
 }
 
 // MetricsResponse represents model training metrics
@@ -159,7 +159,7 @@ type CreateModelFromBuildRequest struct {
 	Algorithm     string
 	ModelType     string
 	TargetColumn  string
-	InputColumns  []string
+	InputColumns  []string // Model input variables (preprocessing is part of scoring logic)
 	ModelFilePath string
 	Metrics       map[string]interface{}
 	CreatedBy     string

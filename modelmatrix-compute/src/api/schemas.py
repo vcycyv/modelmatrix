@@ -12,12 +12,20 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
+class ModelType(str, Enum):
+    """Model type for training."""
+    CLASSIFICATION = "classification"
+    REGRESSION = "regression"
+    CLUSTERING = "clustering"
+
+
 class TrainRequest(BaseModel):
     """Request schema for model training."""
     datasource_id: str = Field(..., description="Datasource UUID")
     build_id: str = Field(..., description="Model build UUID for callback")
     file_path: str = Field(..., description="Path to data file in MinIO")
     algorithm: str = Field(..., description="Algorithm name (decision_tree, random_forest, xgboost)")
+    model_type: ModelType = Field(ModelType.CLASSIFICATION, description="Model type (classification, regression, clustering)")
     hyperparameters: Dict[str, Any] = Field(default_factory=dict, description="Algorithm hyperparameters")
     target_column: str = Field(..., description="Name of the target column")
     input_columns: List[str] = Field(..., description="List of input feature columns")

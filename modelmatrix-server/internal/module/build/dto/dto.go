@@ -115,11 +115,12 @@ func (p *ListParams) Offset() int {
 
 // BuildCallbackRequest represents callback from compute service when training completes
 type BuildCallbackRequest struct {
-	BuildID   string                 `json:"build_id" binding:"required,uuid"`
-	JobID     string                 `json:"job_id" binding:"required"`
-	Status    string                 `json:"status" binding:"required,oneof=completed failed"`
-	ModelPath *string                `json:"model_path,omitempty"`
-	Metrics   map[string]interface{} `json:"metrics,omitempty"`
-	Error     *string                `json:"error,omitempty"`
+	BuildID      string                 `json:"build_id" binding:"required,uuid"`
+	JobID        string                 `json:"job_id" binding:"required"`
+	Status       string                 `json:"status" binding:"required,oneof=completed failed"`
+	ModelPath    *string                `json:"model_path,omitempty"`
+	Metrics      map[string]interface{} `json:"metrics,omitempty"`
+	FeatureNames []string               `json:"feature_names,omitempty"` // Actual input features used by the model
+	FeatureCount *int                   `json:"feature_count,omitempty"` // Number of features
+	Error        *string                `json:"error,omitempty"`
 }
-

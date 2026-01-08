@@ -160,7 +160,7 @@ func main() {
 	// --- Model Manage Module (initialize first, needed by Build) ---
 	invDomainService := invDomain.NewService()
 	modelRepo := invRepo.NewModelRepository(database)
-	modelService := invApp.NewModelService(modelRepo, invDomainService)
+	modelService := invApp.NewModelService(modelRepo, invDomainService, fileService)
 	modelController := invApi.NewModelController(modelService)
 
 	// Register model manage routes

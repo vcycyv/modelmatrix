@@ -150,4 +150,45 @@ class DataLoader:
         
         return X, y
 
+    def prepare_features_unsupervised(self, df: pd.DataFrame, input_columns: list) -> pd.DataFrame:
+        """
+        Prepare features for unsupervised learning (no target column).
+        
+        Args:
+            df: Input DataFrame
+            input_columns: List of input feature columns
+            
+        Returns:
+            Features DataFrame
+        """
+        # Validate columns exist
+        missing_cols = [col for col in input_columns if col not in df.columns]
+        if missing_cols:
+            raise ValueError(f"Missing columns: {missing_cols}")
+        
+        # Extract features
+        X = df[input_columns].copy()
+        
+        # Handle missing values - fill numeric with median, categorical with mode
+        for col in X.columns:
+            if X[col].dtype == 'object' or X[col].dtype.name == 'category':
+                # Fill categorical with mode (most frequent value)
+                mode_val = X[col].mode()
+                if len(mode_val) > 0:
+                    X[col] = X[col].fillna(mode_val[0])
+                else:
+                    X[col] = X[col].fillna('missing')
+            else:
+                # Fill numeric with median
+                X[col] = X[col].fillna(X[col].median())
+        
+        # Encode categorical features using one-hot encoding
+        categorical_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
+        if categorical_cols:
+            logger.info(f"Encoding {len(categorical_cols)} categorical columns: {categorical_cols}")
+            X = pd.get_dummies(X, columns=categorical_cols, drop_first=True, dtype=float)
+        
+        logger.info(f"Prepared features: {len(X)} samples, {len(X.columns)} features (after encoding)")
+        
+        return X
 

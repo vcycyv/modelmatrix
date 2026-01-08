@@ -3,7 +3,9 @@ package application
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
+	"modelmatrix-server/internal/infrastructure/fileservice"
 	"modelmatrix-server/internal/module/inventory/domain"
 	"modelmatrix-server/internal/module/inventory/dto"
 	"modelmatrix-server/internal/module/inventory/repository"
@@ -31,16 +33,19 @@ type ModelService interface {
 type ModelServiceImpl struct {
 	modelRepo     repository.ModelRepository
 	domainService *domain.Service
+	fileService   fileservice.FileService
 }
 
 // NewModelService creates a new model service
 func NewModelService(
 	modelRepo repository.ModelRepository,
 	domainService *domain.Service,
+	fileService fileservice.FileService,
 ) ModelService {
 	return &ModelServiceImpl{
 		modelRepo:     modelRepo,
 		domainService: domainService,
+		fileService:   fileService,
 	}
 }
 
@@ -172,6 +177,9 @@ func (s *ModelServiceImpl) CreateFromBuild(req *dto.CreateModelFromBuildRequest)
 	}
 
 	// Create variables from input columns
+	// Model input variables = original columns (preprocessing like one-hot encoding is part of scoring logic)
+	logger.Info("Creating model with %d input variables", len(req.InputColumns))
+
 	variables := make([]domain.ModelVariable, 0, len(req.InputColumns)+1)
 
 	// Add input variables
@@ -185,14 +193,16 @@ func (s *ModelServiceImpl) CreateFromBuild(req *dto.CreateModelFromBuildRequest)
 		})
 	}
 
-	// Add target variable
-	variables = append(variables, domain.ModelVariable{
-		ModelID:  model.ID,
-		Name:     req.TargetColumn,
-		DataType: domain.VariableDataTypeNumeric, // Default
-		Role:     domain.VariableRoleTarget,
-		Ordinal:  len(req.InputColumns),
-	})
+	// Add target variable (only for supervised learning)
+	if req.TargetColumn != "" {
+		variables = append(variables, domain.ModelVariable{
+			ModelID:  model.ID,
+			Name:     req.TargetColumn,
+			DataType: domain.VariableDataTypeNumeric, // Default
+			Role:     domain.VariableRoleTarget,
+			Ordinal:  len(req.InputColumns),
+		})
+	}
 
 	if err := s.modelRepo.CreateVariables(variables); err != nil {
 		logger.Error("Failed to create variables from build: %v", err)
@@ -252,9 +262,10 @@ func (s *ModelServiceImpl) Update(id string, req *dto.UpdateModelRequest) (*dto.
 	return toModelResponse(model), nil
 }
 
-// Delete deletes a model
+// Delete deletes a model and its files from storage
 func (s *ModelServiceImpl) Delete(id string) error {
-	model, err := s.modelRepo.GetByID(id)
+	// Get model with files to know what to delete from storage
+	model, err := s.modelRepo.GetByIDWithRelations(id)
 	if err != nil {
 		return err
 	}
@@ -264,11 +275,46 @@ func (s *ModelServiceImpl) Delete(id string) error {
 		return err
 	}
 
+	// Delete model files from MinIO storage
+	for _, file := range model.Files {
+		if file.FilePath != "" {
+			// Strip minio://bucket/ prefix if present to get the object key
+			objectKey := file.FilePath
+			if strings.HasPrefix(objectKey, "minio://") {
+				// Format: minio://bucket/path -> extract path after bucket
+				parts := strings.SplitN(objectKey, "/", 4) // ["minio:", "", "bucket", "path"]
+				if len(parts) >= 4 {
+					objectKey = parts[3]
+				}
+			}
+			
+			// Delete the model file
+			if err := s.fileService.Delete(objectKey); err != nil {
+				// Log error but continue - don't fail delete if file is already gone
+				logger.Warn("Failed to delete model file from storage: %s (key: %s), error: %v", file.FilePath, objectKey, err)
+			} else {
+				logger.Info("Deleted model file from storage: %s", objectKey)
+			}
+			
+			// Also delete the metadata file if it exists (model files have companion _metadata.json)
+			if strings.HasSuffix(objectKey, ".pkl") {
+				metadataKey := strings.TrimSuffix(objectKey, ".pkl") + "_metadata.json"
+				if err := s.fileService.Delete(metadataKey); err != nil {
+					logger.Warn("Failed to delete model metadata from storage: %s, error: %v", metadataKey, err)
+				} else {
+					logger.Info("Deleted model metadata from storage: %s", metadataKey)
+				}
+			}
+		}
+	}
+
+	// Delete model from database (cascades to variables and files tables)
 	if err := s.modelRepo.Delete(id); err != nil {
 		logger.Error("Failed to delete model: %v", err)
 		return err
 	}
 
+	logger.Info("Deleted model %s with %d files", id, len(model.Files))
 	return nil
 }
 

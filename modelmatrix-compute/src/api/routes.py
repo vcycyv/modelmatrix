@@ -1,8 +1,7 @@
 """API routes for the compute service."""
 from fastapi import APIRouter, HTTPException, BackgroundTasks
-from typing import Dict, Optional
+from typing import Dict
 import uuid
-import httpx
 
 from src.api.schemas import (
     TrainRequest,
@@ -16,9 +15,6 @@ from src.core.logger import logger
 
 # In-memory job storage (in production, use Redis or database)
 _jobs: Dict[str, Dict] = {}
-
-# HTTP client for callbacks
-_http_client = httpx.AsyncClient(timeout=30.0)
 
 router = APIRouter(prefix="/compute", tags=["compute"])
 
@@ -61,14 +57,17 @@ async def run_training(job_id: str, request: TrainRequest):
         _jobs[job_id]["status"] = JobStatus.TRAINING
         _jobs[job_id]["progress"] = 10
         
-        # Train model
+        # Train model and notify backend
         trainer = ModelTrainer()
-        result = trainer.train(
+        result = await trainer.train_and_notify(
             file_path=request.file_path,
             algorithm=request.algorithm,
             hyperparameters=request.hyperparameters,
             target_column=request.target_column,
             input_columns=request.input_columns,
+            model_type=request.model_type.value if hasattr(request.model_type, 'value') else str(request.model_type),
+            callback_url=request.callback_url,
+            build_id=request.build_id,
         )
         
         # Update job status
@@ -78,48 +77,11 @@ async def run_training(job_id: str, request: TrainRequest):
         
         logger.info(f"Training job {job_id} completed with status {result['status']}")
         
-        # Call webhook to notify backend
-        if request.callback_url:
-            await send_callback(request.callback_url, request.build_id, job_id, result)
-        
     except Exception as e:
         logger.error(f"Training job {job_id} failed: {e}", exc_info=True)
         _jobs[job_id]["status"] = JobStatus.FAILED
         _jobs[job_id]["error"] = str(e)
         _jobs[job_id]["progress"] = 0
-        
-        # Notify failure via callback
-        if request.callback_url:
-            await send_callback(
-                request.callback_url,
-                request.build_id,
-                job_id,
-                {"status": "failed", "error": str(e), "model_path": None, "metrics": None}
-            )
-
-
-async def send_callback(callback_url: str, build_id: str, job_id: str, result: Dict):
-    """Send callback to backend with training results."""
-    try:
-        payload = {
-            "build_id": build_id,
-            "job_id": job_id,
-            "status": result.get("status", "failed"),
-            "model_path": result.get("model_path"),
-            "metrics": result.get("metrics"),
-            "error": result.get("error"),
-        }
-        
-        logger.info(f"Sending callback to {callback_url} for build {build_id}")
-        response = await _http_client.post(callback_url, json=payload)
-        
-        if response.status_code == 200:
-            logger.info(f"Callback successful for build {build_id}")
-        else:
-            logger.warning(f"Callback returned status {response.status_code}: {response.text}")
-            
-    except Exception as e:
-        logger.error(f"Failed to send callback for build {build_id}: {e}")
 
 
 @router.get("/status/{job_id}", response_model=JobStatusResponse)

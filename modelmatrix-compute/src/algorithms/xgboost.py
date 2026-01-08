@@ -1,15 +1,15 @@
 """XGBoost algorithm implementation."""
 from typing import Dict, Any
 import pandas as pd
-from xgboost import XGBClassifier
+from xgboost import XGBClassifier, XGBRegressor
 
 from src.algorithms.base import BaseAlgorithm
 
 
 class XGBoostAlgorithm(BaseAlgorithm):
-    """XGBoost classifier."""
+    """XGBoost classifier/regressor."""
     
-    def train(self, X: pd.DataFrame, y: pd.Series, hyperparameters: Dict[str, Any]) -> XGBClassifier:
+    def train(self, X: pd.DataFrame, y: pd.Series, hyperparameters: Dict[str, Any], model_type: str = "classification") -> Any:
         """Train an XGBoost model."""
         # Default hyperparameters
         params = {
@@ -20,13 +20,14 @@ class XGBoostAlgorithm(BaseAlgorithm):
         }
         params.update(hyperparameters)
         
-        # Create and train model
-        model = XGBClassifier(**params)
-        model.fit(X, y)
+        # Create and train model based on model type
+        if model_type == "regression":
+            model = XGBRegressor(**params)
+        else:
+            model = XGBClassifier(**params)
         
+        model.fit(X, y)
         return model
     
     def get_name(self) -> str:
         return "xgboost"
-
-
