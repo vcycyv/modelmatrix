@@ -122,6 +122,20 @@ class ModelTrainer:
             logger.info("Evaluating model...")
             metrics = algo.evaluate(model, X_test, y_test, model_type)
             
+            # Extract feature importances
+            logger.info("Extracting feature importances...")
+            feature_importances = algo.get_feature_importances(
+                model=model,
+                feature_names=feature_names,
+                X=X_test,
+                y=y_test,
+            )
+            
+            # Log which features are unused (importance = 0)
+            unused_features = [name for name, imp in feature_importances.items() if imp == 0]
+            if unused_features:
+                logger.info(f"Unused features (importance=0): {unused_features}")
+            
             # Save model with feature names
             logger.info("Saving model...")
             model_path = self.model_saver.save_model(
@@ -142,6 +156,7 @@ class ModelTrainer:
                 "metrics": metrics,
                 "feature_names": feature_names,
                 "feature_count": len(feature_names),
+                "feature_importances": feature_importances,
                 "error": None,
             }
             
@@ -206,6 +221,7 @@ class ModelTrainer:
                 "metrics": result.get("metrics"),
                 "feature_names": result.get("feature_names"),
                 "feature_count": result.get("feature_count"),
+                "feature_importances": result.get("feature_importances"),
                 "error": result.get("error"),
             }
             

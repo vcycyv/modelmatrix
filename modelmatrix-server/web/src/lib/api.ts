@@ -165,6 +165,7 @@ export const modelApi = {
   getModelsInProject: (projectId: string) => request<Model[]>(`/projects/${projectId}/models`),
   list: () => request<{ models: Model[]; total: number }>('/models'),
   get: (id: string) => request<Model>(`/models/${id}`),
+  getDetail: (id: string) => request<ModelDetail>(`/models/${id}`),
   update: (id: string, data: { name?: string; description?: string }) =>
     request<Model>(`/models/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   activate: (id: string) => request<Model>(`/models/${id}/activate`, { method: 'POST' }),
@@ -267,6 +268,36 @@ export interface Model {
   created_by: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface ModelVariable {
+  id: string;
+  model_id: string;
+  name: string;
+  data_type: string;
+  role: 'input' | 'target';
+  importance?: number;
+  statistics?: Record<string, unknown>;
+  encoding_info?: Record<string, unknown>;
+  ordinal: number;
+  created_at: string;
+}
+
+export interface ModelFile {
+  id: string;
+  model_id: string;
+  file_type: string;
+  file_path: string;
+  file_name: string;
+  file_size?: number;
+  checksum?: string;
+  description?: string;
+  created_at: string;
+}
+
+export interface ModelDetail extends Model {
+  variables: ModelVariable[];
+  files: ModelFile[];
 }
 
 export interface CreateFolderRequest {

@@ -463,19 +463,20 @@ func (s *BuildServiceImpl) createModelFromBuild(build *domain.ModelBuild, callba
 
 	// Create model with the same project/folder as the build
 	createReq := &invDto.CreateModelFromBuildRequest{
-		BuildID:       build.ID,
-		Name:          build.Name,
-		Description:   build.Description,
-		DatasourceID:  build.DatasourceID,
-		ProjectID:     build.ProjectID,
-		FolderID:      build.FolderID,
-		Algorithm:     build.Algorithm,
-		ModelType:     string(build.ModelType),
-		TargetColumn:  targetColumn,
-		InputColumns:  modelInputColumns,
-		ModelFilePath: modelFilePath,
-		Metrics:       callback.Metrics,
-		CreatedBy:     build.CreatedBy,
+		BuildID:            build.ID,
+		Name:               build.Name,
+		Description:        build.Description,
+		DatasourceID:       build.DatasourceID,
+		ProjectID:          build.ProjectID,
+		FolderID:           build.FolderID,
+		Algorithm:          build.Algorithm,
+		ModelType:          string(build.ModelType),
+		TargetColumn:       targetColumn,
+		InputColumns:       modelInputColumns,
+		FeatureImportances: callback.FeatureImportances,
+		ModelFilePath:      modelFilePath,
+		Metrics:            callback.Metrics,
+		CreatedBy:          build.CreatedBy,
 	}
 
 	_, err = s.modelService.CreateFromBuild(createReq)

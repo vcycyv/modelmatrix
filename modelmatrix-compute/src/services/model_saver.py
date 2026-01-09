@@ -1,11 +1,10 @@
 """Service for saving trained models to MinIO."""
 import io
-import json
 import pickle
 from datetime import datetime
 from minio import Minio
 from minio.error import S3Error
-from typing import Any, List, Optional, Dict
+from typing import Any, List, Optional
 
 from src.core.config import settings
 from src.core.logger import logger
@@ -49,9 +48,7 @@ class ModelSaver:
         """
         # Generate model path
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        base_path = f"models/{algorithm}/{job_id}_{timestamp}"
-        model_path = f"{base_path}.pkl"
-        metadata_path = f"{base_path}_metadata.json"
+        model_path = f"models/{algorithm}/{job_id}_{timestamp}.pkl"
         
         try:
             logger.info(f"Saving model to MinIO: {model_path}")
@@ -69,29 +66,6 @@ class ModelSaver:
                 content_type="application/octet-stream"
             )
             
-            # Save metadata with feature names
-            metadata: Dict[str, Any] = {
-                "job_id": job_id,
-                "algorithm": algorithm,
-                "model_type": model_type,
-                "target_column": target_column,
-                "feature_names": feature_names or [],
-                "feature_count": len(feature_names) if feature_names else 0,
-                "created_at": datetime.utcnow().isoformat(),
-            }
-            
-            metadata_bytes = json.dumps(metadata, indent=2).encode('utf-8')
-            metadata_stream = io.BytesIO(metadata_bytes)
-            
-            self.client.put_object(
-                self.bucket,
-                metadata_path,
-                metadata_stream,
-                length=len(metadata_bytes),
-                content_type="application/json"
-            )
-            
-            logger.info(f"Model metadata saved: {metadata_path}")
             logger.info(f"Model uses {len(feature_names) if feature_names else 0} features")
             
             # Return full path

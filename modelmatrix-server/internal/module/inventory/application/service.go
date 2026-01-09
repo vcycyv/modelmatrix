@@ -182,15 +182,22 @@ func (s *ModelServiceImpl) CreateFromBuild(req *dto.CreateModelFromBuildRequest)
 
 	variables := make([]domain.ModelVariable, 0, len(req.InputColumns)+1)
 
-	// Add input variables
+	// Add input variables with importance scores
 	for i, colName := range req.InputColumns {
-		variables = append(variables, domain.ModelVariable{
+		variable := domain.ModelVariable{
 			ModelID:  model.ID,
 			Name:     colName,
 			DataType: domain.VariableDataTypeNumeric, // Default, can be refined later
 			Role:     domain.VariableRoleInput,
 			Ordinal:  i,
-		})
+		}
+		// Set importance if available from training
+		if req.FeatureImportances != nil {
+			if imp, ok := req.FeatureImportances[colName]; ok {
+				variable.Importance = &imp
+			}
+		}
+		variables = append(variables, variable)
 	}
 
 	// Add target variable (only for supervised learning)
@@ -287,23 +294,13 @@ func (s *ModelServiceImpl) Delete(id string) error {
 					objectKey = parts[3]
 				}
 			}
-			
+
 			// Delete the model file
 			if err := s.fileService.Delete(objectKey); err != nil {
 				// Log error but continue - don't fail delete if file is already gone
 				logger.Warn("Failed to delete model file from storage: %s (key: %s), error: %v", file.FilePath, objectKey, err)
 			} else {
 				logger.Info("Deleted model file from storage: %s", objectKey)
-			}
-			
-			// Also delete the metadata file if it exists (model files have companion _metadata.json)
-			if strings.HasSuffix(objectKey, ".pkl") {
-				metadataKey := strings.TrimSuffix(objectKey, ".pkl") + "_metadata.json"
-				if err := s.fileService.Delete(metadataKey); err != nil {
-					logger.Warn("Failed to delete model metadata from storage: %s, error: %v", metadataKey, err)
-				} else {
-					logger.Info("Deleted model metadata from storage: %s", metadataKey)
-				}
 			}
 		}
 	}

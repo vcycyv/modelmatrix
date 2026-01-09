@@ -150,17 +150,18 @@ func (p *ListParams) Offset() int {
 
 // CreateModelFromBuildRequest is used internally when creating a model from a completed build
 type CreateModelFromBuildRequest struct {
-	BuildID       string
-	Name          string
-	Description   string
-	DatasourceID  string
-	ProjectID     *string // Inherits from build
-	FolderID      *string // Inherits from build
-	Algorithm     string
-	ModelType     string
-	TargetColumn  string
-	InputColumns  []string // Model input variables (preprocessing is part of scoring logic)
-	ModelFilePath string
-	Metrics       map[string]interface{}
-	CreatedBy     string
+	BuildID            string
+	Name               string
+	Description        string
+	DatasourceID       string
+	ProjectID          *string // Inherits from build
+	FolderID           *string // Inherits from build
+	Algorithm          string
+	ModelType          string
+	TargetColumn       string
+	InputColumns       []string           // Model input variables (preprocessing is part of scoring logic)
+	FeatureImportances map[string]float64 // Feature name -> importance score (0 = unused)
+	ModelFilePath      string
+	Metrics            map[string]interface{}
+	CreatedBy          string
 }

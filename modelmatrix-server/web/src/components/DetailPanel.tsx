@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { TreeNode } from './TreeView';
-import { Folder, Project, ModelBuild, Model, Collection, Datasource, Column, datasourceApi } from '../lib/api';
+import { Folder, Project, ModelBuild, Model, ModelVariable, Collection, Datasource, Column, datasourceApi, modelApi } from '../lib/api';
 
 // Extended node type that can include data items
 export interface DataNode {
@@ -297,34 +297,171 @@ function BuildDetails({ build }: { build: ModelBuild }) {
 }
 
 function ModelDetails({ model }: { model: Model }) {
+  const [variables, setVariables] = useState<ModelVariable[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [showVariables, setShowVariables] = useState(false);
+
+  // Load variables when model changes or when showVariables is toggled on
+  useEffect(() => {
+    if (!showVariables) return;
+    
+    const loadVariables = async () => {
+      setIsLoading(true);
+      try {
+        const detail = await modelApi.getDetail(model.id);
+        // Sort by importance (descending), nulls last
+        const sorted = [...detail.variables].sort((a, b) => {
+          // Target variable always last
+          if (a.role === 'target') return 1;
+          if (b.role === 'target') return -1;
+          // Sort by importance descending
+          const impA = a.importance ?? -1;
+          const impB = b.importance ?? -1;
+          return impB - impA;
+        });
+        setVariables(sorted);
+      } catch (err) {
+        console.error('Failed to load model variables:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadVariables();
+  }, [model.id, showVariables]);
+
+  // Reset when model changes
+  useEffect(() => {
+    setVariables([]);
+    setShowVariables(false);
+  }, [model.id]);
+
   return (
-    <dl>
-      <InfoRow label="Status" value={<StatusBadge status={model.status} />} />
-      <InfoRow label="Description" value={model.description} />
-      <InfoRow label="Algorithm" value={model.algorithm} />
-      <InfoRow label="Model Type" value={model.model_type} />
-      <InfoRow label="Target Column" value={model.target_column} />
-      <InfoRow label="Version" value={model.version} />
-      {model.metrics && Object.keys(model.metrics).length > 0 && (
-        <InfoRow 
-          label="Metrics" 
-          value={
-            <div className="space-y-1">
-              {Object.entries(model.metrics).map(([key, value]) => (
-                <div key={key} className="flex justify-between text-sm">
-                  <span className="text-slate-500">{key}:</span>
-                  <span className="font-mono">{typeof value === 'number' ? value.toFixed(4) : value}</span>
-                </div>
-              ))}
-            </div>
-          } 
-        />
-      )}
-      <InfoRow label="Build ID" value={<code className="text-xs bg-slate-100 px-2 py-1 rounded">{model.build_id}</code>} />
-      <InfoRow label="Datasource ID" value={<code className="text-xs bg-slate-100 px-2 py-1 rounded">{model.datasource_id}</code>} />
-      <InfoRow label="Created By" value={model.created_by} />
-      <InfoRow label="Created At" value={new Date(model.created_at).toLocaleString()} />
-    </dl>
+    <div className="space-y-6">
+      <dl>
+        <InfoRow label="Status" value={<StatusBadge status={model.status} />} />
+        <InfoRow label="Description" value={model.description} />
+        <InfoRow label="Algorithm" value={model.algorithm} />
+        <InfoRow label="Model Type" value={model.model_type} />
+        <InfoRow label="Target Column" value={model.target_column} />
+        <InfoRow label="Version" value={model.version} />
+        {model.metrics && Object.keys(model.metrics).length > 0 && (
+          <InfoRow 
+            label="Metrics" 
+            value={
+              <div className="space-y-1">
+                {Object.entries(model.metrics).map(([key, value]) => (
+                  <div key={key} className="flex justify-between text-sm">
+                    <span className="text-slate-500">{key}:</span>
+                    <span className="font-mono">{typeof value === 'number' ? value.toFixed(4) : value}</span>
+                  </div>
+                ))}
+              </div>
+            } 
+          />
+        )}
+        <InfoRow label="Build ID" value={<code className="text-xs bg-slate-100 px-2 py-1 rounded">{model.build_id}</code>} />
+        <InfoRow label="Datasource ID" value={<code className="text-xs bg-slate-100 px-2 py-1 rounded">{model.datasource_id}</code>} />
+        <InfoRow label="Created By" value={model.created_by} />
+        <InfoRow label="Created At" value={new Date(model.created_at).toLocaleString()} />
+      </dl>
+
+      {/* Model Variables Section */}
+      <div className="border-t border-slate-200 pt-4">
+        <button
+          onClick={() => setShowVariables(!showVariables)}
+          className="flex items-center justify-between w-full text-left"
+        >
+          <h3 className="text-sm font-semibold text-slate-700">Model Variables</h3>
+          <svg
+            className={`w-5 h-5 text-slate-400 transition-transform ${showVariables ? 'rotate-180' : ''}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {showVariables && (
+          <div className="mt-3">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-4">
+                <svg className="animate-spin h-5 w-5 text-blue-600" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <span className="ml-2 text-sm text-slate-500">Loading variables...</span>
+              </div>
+            ) : variables.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200">
+                      <th className="text-left py-2 pr-4 font-medium text-slate-600">Variable</th>
+                      <th className="text-left py-2 pr-4 font-medium text-slate-600">Role</th>
+                      <th className="text-right py-2 font-medium text-slate-600">Importance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {variables.map((variable) => (
+                      <tr key={variable.id} className="border-b border-slate-100 last:border-0">
+                        <td className="py-2 pr-4">
+                          <code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded">{variable.name}</code>
+                        </td>
+                        <td className="py-2 pr-4">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                            variable.role === 'target' 
+                              ? 'bg-emerald-100 text-emerald-700' 
+                              : 'bg-blue-100 text-blue-700'
+                          }`}>
+                            {variable.role}
+                          </span>
+                        </td>
+                        <td className="py-2 text-right">
+                          {variable.role === 'target' ? (
+                            <span className="text-slate-400">—</span>
+                          ) : variable.importance !== undefined && variable.importance !== null ? (
+                            <div className="flex items-center justify-end space-x-2">
+                              <div className="w-16 bg-slate-200 rounded-full h-1.5">
+                                <div
+                                  className={`h-1.5 rounded-full ${
+                                    variable.importance === 0 
+                                      ? 'bg-slate-300' 
+                                      : variable.importance > 0.1 
+                                        ? 'bg-blue-500' 
+                                        : 'bg-blue-300'
+                                  }`}
+                                  style={{ width: `${Math.min(variable.importance * 100, 100)}%` }}
+                                />
+                              </div>
+                              <span className={`font-mono text-xs ${
+                                variable.importance === 0 ? 'text-slate-400' : 'text-slate-600'
+                              }`}>
+                                {variable.importance.toFixed(4)}
+                              </span>
+                              {variable.importance === 0 && (
+                                <span className="text-xs text-orange-500" title="This feature was not used by the model">
+                                  unused
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500 py-2">No variables available</p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
