@@ -85,3 +85,35 @@ class HealthResponse(BaseModel):
     version: str = "1.0.0"
 
 
+class ScoreRequest(BaseModel):
+    """Request schema for model scoring."""
+    model_id: str = Field(..., description="Model UUID")
+    model_file_path: str = Field(..., description="Path to model file in MinIO")
+    input_file_path: str = Field(..., description="Path to input data file in MinIO")
+    output_path: str = Field(..., description="Output path in MinIO for scored data")
+    input_columns: List[str] = Field(..., description="List of input feature columns")
+    model_type: str = Field(..., description="Model type (classification, regression, clustering)")
+    algorithm: str = Field(..., description="Algorithm name")
+    callback_url: Optional[str] = Field(None, description="URL to call when scoring completes")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "model_id": "550e8400-e29b-41d4-a716-446655440000",
+                "model_file_path": "minio://modelmatrix/models/random_forest/abc123.pkl",
+                "input_file_path": "minio://modelmatrix/datasources/data.parquet",
+                "output_path": "scored/550e8400/scored_data.parquet",
+                "input_columns": ["feature1", "feature2", "feature3"],
+                "model_type": "classification",
+                "algorithm": "random_forest",
+                "callback_url": "http://localhost:8080/api/models/550e8400/score/callback"
+            }
+        }
+
+
+class ScoreResponse(BaseModel):
+    """Response schema for scoring request."""
+    job_id: str = Field(..., description="Scoring job ID")
+    status: str = Field(..., description="Job status")
+    message: str = Field(..., description="Status message")
+

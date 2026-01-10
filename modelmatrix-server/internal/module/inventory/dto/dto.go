@@ -165,3 +165,32 @@ type CreateModelFromBuildRequest struct {
 	Metrics            map[string]interface{}
 	CreatedBy          string
 }
+
+// ScoreRequest represents a request to score data using a model
+type ScoreRequest struct {
+	DatasourceID       string  `json:"datasource_id" binding:"required,uuid" example:"550e8400-e29b-41d4-a716-446655440000"`
+	OutputCollectionID string  `json:"output_collection_id" binding:"required,uuid" example:"550e8400-e29b-41d4-a716-446655440001"`
+	OutputTableName    *string `json:"output_table_name,omitempty" example:"scored_data_20240115"`
+}
+
+// ScoreResponse represents the response from a scoring request
+type ScoreResponse struct {
+	JobID              string `json:"job_id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Status             string `json:"status" example:"scoring"`
+	Message            string `json:"message" example:"Scoring job started"`
+	OutputDatasourceID string `json:"output_datasource_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440002"`
+}
+
+// ScoreCallbackRequest represents the callback from the compute service after scoring
+type ScoreCallbackRequest struct {
+	ModelID        string `json:"model_id"`
+	JobID          string `json:"job_id"`
+	Status         string `json:"status"` // "completed" or "failed"
+	OutputFilePath string `json:"output_file_path,omitempty"`
+	RowCount       int64  `json:"row_count,omitempty"`
+	Error          string `json:"error,omitempty"`
+	// These are passed via query params
+	CollectionID string `json:"-" form:"collection_id"`
+	TableName    string `json:"-" form:"table_name"`
+	CreatedBy    string `json:"-" form:"created_by"`
+}

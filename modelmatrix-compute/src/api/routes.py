@@ -6,11 +6,14 @@ import uuid
 from src.api.schemas import (
     TrainRequest,
     TrainResponse,
+    ScoreRequest,
+    ScoreResponse,
     JobStatusResponse,
     HealthResponse,
     JobStatus,
 )
 from src.services.model_trainer import ModelTrainer
+from src.services.model_scorer import ModelScorer
 from src.core.logger import logger
 
 # In-memory job storage (in production, use Redis or database)
@@ -100,6 +103,69 @@ async def get_job_status(job_id: str):
         metrics=job.get("metrics"),
         error=job.get("error"),
     )
+
+
+@router.post("/score", response_model=ScoreResponse, status_code=202)
+async def score_model(request: ScoreRequest, background_tasks: BackgroundTasks):
+    """
+    Start a model scoring job.
+    
+    The scoring runs in the background. Use GET /compute/status/{job_id} to check progress.
+    """
+    job_id = str(uuid.uuid4())
+    
+    # Initialize job status
+    _jobs[job_id] = {
+        "job_id": job_id,
+        "status": JobStatus.PENDING,
+        "progress": 0,
+        "output_file_path": None,
+        "error": None,
+    }
+    
+    # Start scoring in background
+    background_tasks.add_task(run_scoring, job_id, request)
+    
+    logger.info(f"Scoring job {job_id} started for model {request.model_id}")
+    
+    return ScoreResponse(
+        job_id=job_id,
+        status="scoring",
+        message="Scoring job started"
+    )
+
+
+async def run_scoring(job_id: str, request: ScoreRequest):
+    """Background task to run model scoring."""
+    try:
+        # Update status
+        _jobs[job_id]["status"] = JobStatus.TRAINING  # Reuse TRAINING status for scoring
+        _jobs[job_id]["progress"] = 10
+        
+        # Score data and notify backend
+        scorer = ModelScorer()
+        result = await scorer.score_and_notify(
+            model_file_path=request.model_file_path,
+            input_file_path=request.input_file_path,
+            output_path=request.output_path,
+            input_columns=request.input_columns,
+            model_type=request.model_type,
+            callback_url=request.callback_url,
+            model_id=request.model_id,
+        )
+        
+        # Update job status
+        _jobs[job_id].update(result)
+        _jobs[job_id]["status"] = JobStatus.COMPLETED if result["status"] == "completed" else JobStatus.FAILED
+        _jobs[job_id]["progress"] = 100
+        
+        logger.info(f"Scoring job {job_id} completed with status {result['status']}")
+        
+    except Exception as e:
+        logger.error(f"Scoring job {job_id} failed: {e}", exc_info=True)
+        _jobs[job_id]["status"] = JobStatus.FAILED
+        _jobs[job_id]["error"] = str(e)
+        _jobs[job_id]["progress"] = 0
 
 
 @router.get("/health", response_model=HealthResponse)

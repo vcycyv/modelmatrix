@@ -176,6 +176,11 @@ func main() {
 	// Initialize compute service client
 	computeClient := compute.NewClient(&cfg.Compute)
 
+
+	// Configure scoring for model service
+	dsGetter := &datasourceGetterAdapter{svc: datasourceService}
+	dsCreator := &datasourceCreatorAdapter{svc: datasourceService}
+	modelService.ConfigureScoring(computeClient, dsGetter, dsCreator, cfg)
 	buildService := buildApp.NewBuildService(buildRepo, buildDomainService, computeClient, datasourceService, modelService, folderSvc, cfg)
 	buildController := buildApi.NewBuildController(buildService)
 
@@ -328,3 +333,31 @@ func requestLogger() gin.HandlerFunc {
 	}
 }
 
+// datasourceGetterAdapter adapts DatasourceService to DatasourceGetter interface
+type datasourceGetterAdapter struct {
+	svc dsApp.DatasourceService
+}
+
+func (a *datasourceGetterAdapter) GetFilePath(datasourceID string) (string, error) {
+	ds, err := a.svc.GetByID(datasourceID)
+	if err != nil {
+		return "", err
+	}
+	if ds.FilePath == "" {
+		return "", fmt.Errorf("datasource %s has no file path", datasourceID)
+	}
+	return ds.FilePath, nil
+}
+
+// datasourceCreatorAdapter adapts DatasourceService to DatasourceCreator interface
+type datasourceCreatorAdapter struct {
+	svc dsApp.DatasourceService
+}
+
+func (a *datasourceCreatorAdapter) CreateScoredOutput(collectionID, name, filePath string, rowCount int, createdBy string) (string, error) {
+	resp, err := a.svc.CreateFromExistingFile(collectionID, name, filePath, rowCount, createdBy)
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}

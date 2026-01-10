@@ -15,6 +15,7 @@ import (
 // Client is the interface for communicating with the compute service
 type Client interface {
 	TrainModel(req *TrainRequest) (*TrainResponse, error)
+	ScoreModel(req *ScoreRequest) (*ScoreResponse, error)
 	GetStatus(jobID string) (*JobStatusResponse, error)
 	HealthCheck() error
 }
@@ -57,6 +58,25 @@ type JobStatusResponse struct {
 	ModelPath *string                `json:"model_path,omitempty"`
 	Metrics   map[string]interface{} `json:"metrics,omitempty"`
 	Error     *string                `json:"error,omitempty"`
+}
+
+// ScoreRequest represents a model scoring request
+type ScoreRequest struct {
+	ModelID       string   `json:"model_id"`
+	ModelFilePath string   `json:"model_file_path"`
+	InputFilePath string   `json:"input_file_path"`
+	OutputPath    string   `json:"output_path"`
+	InputColumns  []string `json:"input_columns"`
+	ModelType     string   `json:"model_type"` // classification, regression, clustering
+	Algorithm     string   `json:"algorithm"`
+	CallbackURL   string   `json:"callback_url,omitempty"`
+}
+
+// ScoreResponse represents the response from a scoring request
+type ScoreResponse struct {
+	JobID   string `json:"job_id"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
 }
 
 // HTTPClient implements the Client interface using HTTP
@@ -114,6 +134,45 @@ func (c *HTTPClient) TrainModel(req *TrainRequest) (*TrainResponse, error) {
 
 	logger.Info("Training job started: %s", trainResp.JobID)
 	return &trainResp, nil
+}
+
+// ScoreModel sends a scoring request to the compute service
+func (c *HTTPClient) ScoreModel(req *ScoreRequest) (*ScoreResponse, error) {
+	url := fmt.Sprintf("%s/compute/score", c.baseURL)
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		httpReq.Header.Set("X-API-Key", c.apiKey)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("compute service returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var scoreResp ScoreResponse
+	if err := json.NewDecoder(resp.Body).Decode(&scoreResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	logger.Info("Scoring job started: %s", scoreResp.JobID)
+	return &scoreResp, nil
 }
 
 // GetStatus retrieves the status of a training job

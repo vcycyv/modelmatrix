@@ -426,6 +426,65 @@ func (s *DatasourceServiceImpl) extractColumnsFromCSV(reader io.Reader) ([]domai
 	return columns, nil
 }
 
+// CreateFromExistingFile creates a datasource pointing to an existing file in MinIO
+// Used for scored output files that are already saved to MinIO by compute service
+func (s *DatasourceServiceImpl) CreateFromExistingFile(collectionID, name, filePath string, rowCount int, createdBy string) (*dto.DatasourceResponse, error) {
+	// Verify collection exists
+	collection, err := s.collectionRepo.GetByID(collectionID)
+	if err != nil {
+		return nil, fmt.Errorf("collection not found: %w", err)
+	}
+
+	// Check name uniqueness within collection
+	existingNames, err := s.datasourceRepo.GetNamesInCollection(collectionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.domainService.ValidateDatasourceNameUnique(name, existingNames); err != nil {
+		return nil, err
+	}
+
+	// Determine type from file extension
+	dsType := domain.DatasourceTypeParquet
+	if strings.HasSuffix(strings.ToLower(filePath), ".csv") {
+		dsType = domain.DatasourceTypeCSV
+	}
+
+	// Create datasource entity
+	datasource := &domain.Datasource{
+		CollectionID: collectionID,
+		Name:         name,
+		Description:  fmt.Sprintf("Scored output from model (rows: %d)", rowCount),
+		Type:         dsType,
+		FilePath:     filePath,
+		CreatedBy:    createdBy,
+	}
+
+	// Create datasource in database
+	if err := s.datasourceRepo.Create(datasource); err != nil {
+		logger.Error("Failed to create datasource from existing file: %v", err)
+		return nil, err
+	}
+
+	// Extract columns if possible (for parquet files)
+	if dsType == domain.DatasourceTypeParquet {
+		columns, err := s.extractColumnsFromFile(dsType, filePath)
+		if err != nil {
+			logger.Warn("Failed to extract columns from scored parquet file: %v", err)
+		} else if len(columns) > 0 {
+			for i := range columns {
+				columns[i].DatasourceID = datasource.ID
+			}
+			if err := s.columnRepo.CreateBatch(columns); err != nil {
+				logger.Warn("Failed to create columns: %v", err)
+			}
+		}
+	}
+
+	logger.Audit(createdBy, "create", "datasource", datasource.ID, "success", nil)
+	return toDatasourceResponse(datasource, collection.Name), nil
+}
+
 // inferColumnType infers the data type of a column from sample values
 func inferColumnType(rows [][]string, colIndex int) string {
 	if len(rows) == 0 {

@@ -69,6 +69,15 @@ func NoContent(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// Accepted sends a 202 Accepted response
+func Accepted(c *gin.Context, data interface{}) {
+	c.JSON(http.StatusAccepted, Response{
+		Code: CodeSuccess,
+		Msg:  "request accepted",
+		Data: data,
+	})
+}
+
 // BadRequest sends a 400 Bad Request response
 func BadRequest(c *gin.Context, msg string) {
 	if msg == "" {

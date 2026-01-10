@@ -34,7 +34,11 @@ func (c *ModelController) RegisterRoutes(router *gin.RouterGroup, authMiddleware
 		models.DELETE("/:id", auth.RequireAdmin(), c.Delete)
 		models.POST("/:id/activate", auth.RequireEditor(), c.Activate)
 		models.POST("/:id/deactivate", auth.RequireEditor(), c.Deactivate)
+		models.POST("/:id/score", auth.RequireEditor(), c.Score)
 	}
+
+	// Callback endpoint (no auth required, called by compute service)
+	router.POST("/models/:id/score/callback", c.ScoreCallback)
 }
 
 // Create godoc
@@ -230,6 +234,77 @@ func (c *ModelController) Deactivate(ctx *gin.Context) {
 	}
 
 	response.Success(ctx, result)
+}
+
+// Score godoc
+// @Summary Score data using a model
+// @Description Scores input data using a trained model
+// @Tags Models
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param id path string true "Model ID (UUID)"
+// @Param score body dto.ScoreRequest true "Score request data"
+// @Success 202 {object} response.Response{data=dto.ScoreResponse}
+// @Failure 400 {object} response.Response
+// @Failure 401 {object} response.Response
+// @Failure 403 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Router /api/models/{id}/score [post]
+func (c *ModelController) Score(ctx *gin.Context) {
+	id := ctx.Param("id")
+
+	var req dto.ScoreRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(ctx, err.Error())
+		return
+	}
+
+	username := auth.GetUsername(ctx)
+	result, err := c.modelService.Score(id, &req, username)
+	if err != nil {
+		handleError(ctx, err)
+		return
+	}
+
+	response.Accepted(ctx, result)
+}
+
+// ScoreCallback godoc
+// @Summary Handle score callback from compute service
+// @Description Receives callback from compute service when scoring completes
+// @Tags Models
+// @Accept json
+// @Produce json
+// @Param id path string true "Model ID (UUID)"
+// @Param callback body dto.ScoreCallbackRequest true "Callback data"
+// @Success 200 {object} response.Response
+// @Failure 400 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /api/models/{id}/score/callback [post]
+func (c *ModelController) ScoreCallback(ctx *gin.Context) {
+	var req dto.ScoreCallbackRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(ctx, err.Error())
+		return
+	}
+
+	// Use model ID from path if not in body
+	if req.ModelID == "" {
+		req.ModelID = ctx.Param("id")
+	}
+
+	// Parse query params for output datasource creation
+	req.CollectionID = ctx.Query("collection_id")
+	req.TableName = ctx.Query("table_name")
+	req.CreatedBy = ctx.Query("created_by")
+
+	if err := c.modelService.HandleScoreCallback(&req); err != nil {
+		response.InternalError(ctx, err.Error())
+		return
+	}
+
+	response.Success(ctx, map[string]string{"status": "acknowledged"})
 }
 
 // handleError maps domain errors to HTTP responses

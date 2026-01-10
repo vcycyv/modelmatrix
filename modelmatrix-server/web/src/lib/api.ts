@@ -160,6 +160,20 @@ export const buildApi = {
   delete: (id: string) => request<void>(`/builds/${id}`, { method: 'DELETE' }),
 };
 
+// Score request/response interfaces
+export interface ScoreRequest {
+  datasource_id: string;
+  output_collection_id: string;
+  output_table_name?: string;
+}
+
+export interface ScoreResponse {
+  job_id: string;
+  status: string;
+  message: string;
+  output_datasource_id?: string;
+}
+
 // Model API
 export const modelApi = {
   getModelsInProject: (projectId: string) => request<Model[]>(`/projects/${projectId}/models`),
@@ -171,6 +185,8 @@ export const modelApi = {
   activate: (id: string) => request<Model>(`/models/${id}/activate`, { method: 'POST' }),
   deactivate: (id: string) => request<Model>(`/models/${id}/deactivate`, { method: 'POST' }),
   delete: (id: string) => request<void>(`/models/${id}`, { method: 'DELETE' }),
+  score: (modelId: string, req: ScoreRequest) =>
+    request<ScoreResponse>(`/models/${modelId}/score`, { method: 'POST', body: JSON.stringify(req) }),
 };
 
 // Datasource API

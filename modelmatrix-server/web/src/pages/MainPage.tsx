@@ -8,6 +8,7 @@ import ProjectDialog from '../components/ProjectDialog';
 import BuildModelDialog from '../components/BuildModelDialog';
 import BuildEditDialog from '../components/BuildEditDialog';
 import ModelEditDialog from '../components/ModelEditDialog';
+import ScoreModelDialog from '../components/ScoreModelDialog';
 import ConfirmDialog from '../components/ConfirmDialog';
 import DataSourcePanel from '../components/DataSourcePanel';
 import { folderApi, projectApi, buildApi, modelApi, datasourceApi, collectionApi, Folder, Project, ModelBuild, Model, Collection, Datasource } from '../lib/api';
@@ -64,6 +65,11 @@ export default function MainPage() {
   }>({ isOpen: false });
 
   const [modelEditDialog, setModelEditDialog] = useState<{
+    isOpen: boolean;
+    model?: Model;
+  }>({ isOpen: false });
+
+  const [scoreDialog, setScoreDialog] = useState<{
     isOpen: boolean;
     model?: Model;
   }>({ isOpen: false });
@@ -626,6 +632,7 @@ export default function MainPage() {
         onStartBuild={selectedNode?.type === 'build' ? handleStartBuild : undefined}
         onCancelBuild={selectedNode?.type === 'build' ? handleCancelBuild : undefined}
         onDeleteDataNode={selectedDataNode ? handleDeleteDataNode : undefined}
+        onScoreModel={selectedNode?.type === 'model' ? () => setScoreDialog({ isOpen: true, model: selectedNode.data as Model }) : undefined}
       />
 
       {/* Context Menu */}
@@ -748,6 +755,17 @@ export default function MainPage() {
           }
         }}
         model={modelEditDialog.model}
+      />
+
+      {/* Score Model Dialog */}
+      <ScoreModelDialog
+        isOpen={scoreDialog.isOpen}
+        onClose={() => setScoreDialog({ isOpen: false })}
+        onSuccess={() => {
+          // Refresh data tab to show new scored datasource
+          setDataRefreshTrigger((prev) => prev + 1);
+        }}
+        model={scoreDialog.model}
       />
     </Layout>
   );

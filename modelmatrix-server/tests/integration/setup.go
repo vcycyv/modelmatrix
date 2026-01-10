@@ -405,3 +405,11 @@ func (m *mockComputeClient) GetStatus(jobID string) (*compute.JobStatusResponse,
 func (m *mockComputeClient) HealthCheck() error {
 	return nil
 }
+
+func (m *mockComputeClient) ScoreModel(req *compute.ScoreRequest) (*compute.ScoreResponse, error) {
+	return &compute.ScoreResponse{
+		JobID:   "mock-score-job-id",
+		Status:  "accepted",
+		Message: "Scoring job accepted (mock)",
+	}, nil
+}

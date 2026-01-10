@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"modelmatrix-server/internal/infrastructure/compute"
 	"modelmatrix-server/internal/infrastructure/fileservice"
 	"modelmatrix-server/internal/module/inventory/domain"
 	"modelmatrix-server/internal/module/inventory/dto"
 	"modelmatrix-server/internal/module/inventory/repository"
+	"modelmatrix-server/pkg/config"
 	"modelmatrix-server/pkg/logger"
 )
 
@@ -27,13 +30,32 @@ type ModelService interface {
 
 	// Create from build (called when build completes)
 	CreateFromBuild(req *dto.CreateModelFromBuildRequest) (*dto.ModelResponse, error)
+
+	// Scoring
+	Score(modelID string, req *dto.ScoreRequest, scoredBy string) (*dto.ScoreResponse, error)
+	HandleScoreCallback(req *dto.ScoreCallbackRequest) error
+	ConfigureScoring(computeClient compute.Client, datasourceGetter DatasourceGetter, datasourceCreator DatasourceCreator, cfg *config.Config)
+}
+
+// DatasourceGetter interface for getting datasource details (to avoid circular imports)
+type DatasourceGetter interface {
+	GetFilePath(datasourceID string) (string, error)
+}
+
+// DatasourceCreator interface for creating scored output datasource
+type DatasourceCreator interface {
+	CreateScoredOutput(collectionID, name, filePath string, rowCount int, createdBy string) (string, error)
 }
 
 // ModelServiceImpl implements ModelService
 type ModelServiceImpl struct {
-	modelRepo     repository.ModelRepository
-	domainService *domain.Service
-	fileService   fileservice.FileService
+	modelRepo         repository.ModelRepository
+	domainService     *domain.Service
+	fileService       fileservice.FileService
+	computeClient     compute.Client
+	datasourceGetter  DatasourceGetter
+	datasourceCreator DatasourceCreator
+	config            *config.Config
 }
 
 // NewModelService creates a new model service
@@ -47,6 +69,40 @@ func NewModelService(
 		domainService: domainService,
 		fileService:   fileService,
 	}
+}
+
+// NewModelServiceWithScoring creates a model service with scoring capabilities
+func NewModelServiceWithScoring(
+	modelRepo repository.ModelRepository,
+	domainService *domain.Service,
+	fileService fileservice.FileService,
+	computeClient compute.Client,
+	datasourceGetter DatasourceGetter,
+	datasourceCreator DatasourceCreator,
+	cfg *config.Config,
+) ModelService {
+	return &ModelServiceImpl{
+		modelRepo:         modelRepo,
+		domainService:     domainService,
+		fileService:       fileService,
+		computeClient:     computeClient,
+		datasourceGetter:  datasourceGetter,
+		datasourceCreator: datasourceCreator,
+		config:            cfg,
+	}
+}
+
+// ConfigureScoring adds scoring capabilities to an existing model service
+func (s *ModelServiceImpl) ConfigureScoring(
+	computeClient compute.Client,
+	datasourceGetter DatasourceGetter,
+	datasourceCreator DatasourceCreator,
+	cfg *config.Config,
+) {
+	s.computeClient = computeClient
+	s.datasourceGetter = datasourceGetter
+	s.datasourceCreator = datasourceCreator
+	s.config = cfg
 }
 
 // Create creates a new model
@@ -512,4 +568,122 @@ func toFileResponseList(files []domain.ModelFile) []dto.FileResponse {
 		}
 	}
 	return result
+}
+
+// Score scores data using a trained model
+func (s *ModelServiceImpl) Score(modelID string, req *dto.ScoreRequest, scoredBy string) (*dto.ScoreResponse, error) {
+	// Check if scoring dependencies are available
+	if s.computeClient == nil || s.datasourceGetter == nil {
+		return nil, fmt.Errorf("scoring not configured: missing dependencies")
+	}
+
+	// Get model with files and variables
+	model, err := s.modelRepo.GetByIDWithRelations(modelID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get model file path
+	var modelFilePath string
+	for _, f := range model.Files {
+		if f.FileType == domain.FileTypeModel {
+			modelFilePath = f.FilePath
+			break
+		}
+	}
+	if modelFilePath == "" {
+		return nil, fmt.Errorf("model file not found")
+	}
+
+	// Get input feature columns
+	var inputColumns []string
+	for _, v := range model.Variables {
+		if v.Role == domain.VariableRoleInput {
+			inputColumns = append(inputColumns, v.Name)
+		}
+	}
+
+	// Get input datasource file path
+	inputFilePath, err := s.datasourceGetter.GetFilePath(req.DatasourceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get input datasource: %w", err)
+	}
+
+	// Generate output table name if not provided
+	outputTableName := ""
+	if req.OutputTableName != nil && *req.OutputTableName != "" {
+		outputTableName = *req.OutputTableName
+	} else {
+		outputTableName = fmt.Sprintf("scored_%s_%s", model.Name, time.Now().Format("20060102_150405"))
+	}
+
+	// Generate output path in MinIO
+	outputPath := fmt.Sprintf("scored/%s/%s.parquet", modelID, outputTableName)
+
+	// Build callback URL with query params for creating output datasource
+	callbackURL := ""
+	if s.config != nil {
+		callbackURL = fmt.Sprintf("%s/api/models/%s/score/callback?collection_id=%s&table_name=%s&created_by=%s",
+			s.config.Server.BaseURL, modelID, req.OutputCollectionID, outputTableName, scoredBy)
+	}
+
+	// Call compute service
+	scoreReq := &compute.ScoreRequest{
+		ModelID:       modelID,
+		ModelFilePath: modelFilePath,
+		InputFilePath: inputFilePath,
+		OutputPath:    outputPath,
+		InputColumns:  inputColumns,
+		ModelType:     model.ModelType,
+		Algorithm:     model.Algorithm,
+		CallbackURL:   callbackURL,
+	}
+
+	scoreResp, err := s.computeClient.ScoreModel(scoreReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start scoring: %w", err)
+	}
+
+	logger.Info("Scoring started for model %s, job_id: %s", modelID, scoreResp.JobID)
+
+	return &dto.ScoreResponse{
+		JobID:   scoreResp.JobID,
+		Status:  scoreResp.Status,
+		Message: scoreResp.Message,
+	}, nil
+}
+
+// HandleScoreCallback processes the callback from compute service after scoring completes
+func (s *ModelServiceImpl) HandleScoreCallback(req *dto.ScoreCallbackRequest) error {
+	logger.Info("Received scoring callback for model %s, job_id: %s, status: %s", req.ModelID, req.JobID, req.Status)
+
+	if req.Status == "failed" {
+		logger.Error("Scoring failed for model %s: %s", req.ModelID, req.Error)
+		return fmt.Errorf("scoring failed: %s", req.Error)
+	}
+
+	if req.Status == "completed" {
+		logger.Info("Scoring completed for model %s, output: %s, rows: %d", req.ModelID, req.OutputFilePath, req.RowCount)
+
+		// Create output datasource if we have all required info
+		if s.datasourceCreator != nil && req.CollectionID != "" && req.TableName != "" {
+			dsID, err := s.datasourceCreator.CreateScoredOutput(
+				req.CollectionID,
+				req.TableName,
+				req.OutputFilePath,
+				int(req.RowCount),
+				req.CreatedBy,
+			)
+			if err != nil {
+				logger.Error("Failed to create output datasource for model %s: %v", req.ModelID, err)
+				return fmt.Errorf("failed to create output datasource: %w", err)
+			}
+			logger.Info("Created output datasource %s for model %s", dsID, req.ModelID)
+		} else {
+			logger.Warn("Cannot create output datasource: missing creator or params (collection_id=%s, table_name=%s)",
+				req.CollectionID, req.TableName)
+		}
+	}
+
+	return nil
 }
