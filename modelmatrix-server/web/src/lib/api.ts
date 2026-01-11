@@ -190,6 +190,13 @@ export const modelApi = {
 };
 
 // Datasource API
+export interface DataPreview {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  total_rows: number;
+  preview_max: number;
+}
+
 export const datasourceApi = {
   list: async (collectionId?: string) => {
     const params = collectionId ? `?collection_id=${collectionId}` : '';
@@ -204,6 +211,8 @@ export const datasourceApi = {
       method: 'PUT',
       body: JSON.stringify({ columns }),
     }),
+  getPreview: (id: string, limit?: number) => 
+    request<DataPreview>(`/datasources/${id}/preview${limit ? `?limit=${limit}` : ''}`),
 };
 
 export const collectionApi = {

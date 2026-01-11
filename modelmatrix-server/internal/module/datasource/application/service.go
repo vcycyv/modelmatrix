@@ -25,6 +25,8 @@ type DatasourceService interface {
 	List(collectionID *string, params *dto.ListParams) (*dto.DatasourceListResponse, error)
 	// CreateFromExistingFile creates a datasource pointing to an existing file in MinIO (e.g., scored output)
 	CreateFromExistingFile(collectionID, name, filePath string, rowCount int, createdBy string) (*dto.DatasourceResponse, error)
+	// GetDataPreview returns a preview of the datasource data (first N rows)
+	GetDataPreview(id string, limit int) (*dto.DataPreviewResponse, error)
 }
 
 // ColumnService defines the interface for column application service

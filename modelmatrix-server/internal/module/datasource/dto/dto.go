@@ -186,3 +186,10 @@ func (p *ListParams) Offset() int {
 	return (p.Page - 1) * p.PageSize
 }
 
+// DataPreviewResponse represents a preview of datasource data
+type DataPreviewResponse struct {
+	Columns    []string                 `json:"columns"`
+	Rows       []map[string]interface{} `json:"rows"`
+	TotalRows  int                      `json:"total_rows"`
+	PreviewMax int                      `json:"preview_max"`
+}

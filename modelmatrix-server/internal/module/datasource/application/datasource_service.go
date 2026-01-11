@@ -14,6 +14,7 @@ import (
 	"modelmatrix-server/internal/module/datasource/repository"
 	"modelmatrix-server/pkg/logger"
 
+	"github.com/parquet-go/parquet-go"
 	"gorm.io/gorm"
 )
 
@@ -376,21 +377,62 @@ func (s *DatasourceServiceImpl) List(collectionID *string, params *dto.ListParam
 
 // extractColumnsFromFile extracts column metadata from a file
 func (s *DatasourceServiceImpl) extractColumnsFromFile(dsType domain.DatasourceType, fileID string) ([]domain.Column, error) {
-	reader, _, err := s.fileService.Get(fileID)
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
-
 	switch dsType {
 	case domain.DatasourceTypeCSV:
+		reader, _, err := s.fileService.Get(fileID)
+		if err != nil {
+			return nil, err
+		}
+		defer reader.Close()
 		return s.extractColumnsFromCSV(reader)
 	case domain.DatasourceTypeParquet:
-		// Parquet column extraction requires more complex handling
-		// For now, return empty - columns can be added manually
-		return nil, nil
+		// Parquet requires full file content to parse
+		content, _, err := s.fileService.ReadFileContent(fileID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read parquet file: %w", err)
+		}
+		return s.extractColumnsFromParquet(content)
 	default:
 		return nil, fmt.Errorf("unsupported file type: %s", dsType)
+	}
+}
+
+// extractColumnsFromParquet extracts column names and data types from Parquet file
+func (s *DatasourceServiceImpl) extractColumnsFromParquet(content []byte) ([]domain.Column, error) {
+	reader := bytes.NewReader(content)
+	file, err := parquet.OpenFile(reader, int64(len(content)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to open parquet file: %w", err)
+	}
+
+	schema := file.Schema()
+	columns := make([]domain.Column, 0, len(schema.Fields()))
+
+	for _, field := range schema.Fields() {
+		dataType := parquetTypeToDataType(field.Type())
+		columns = append(columns, domain.Column{
+			Name:     field.Name(),
+			DataType: dataType,
+			Role:     domain.ColumnRoleInput,
+		})
+	}
+
+	return columns, nil
+}
+
+// parquetTypeToDataType converts parquet type to our data type string
+func parquetTypeToDataType(t parquet.Type) string {
+	switch t.Kind() {
+	case parquet.Boolean:
+		return "boolean"
+	case parquet.Int32, parquet.Int64:
+		return "int64"
+	case parquet.Float, parquet.Double:
+		return "float64"
+	case parquet.ByteArray, parquet.FixedLenByteArray:
+		return "string"
+	default:
+		return "string"
 	}
 }
 
@@ -535,3 +577,173 @@ func inferColumnType(rows [][]string, colIndex int) string {
 	// Default to string if no data or all empty
 	return "string"
 }
+
+// GetDataPreview returns a preview of the datasource data
+func (s *DatasourceServiceImpl) GetDataPreview(id string, limit int) (*dto.DataPreviewResponse, error) {
+	// Default limit to 100 rows
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+
+	// Get datasource to find file path
+	datasource, err := s.datasourceRepo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if datasource.FilePath == "" {
+		return nil, fmt.Errorf("datasource has no associated file")
+	}
+
+	// Read file from MinIO
+	reader, _, err := s.fileService.Get(datasource.FilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read datasource file: %w", err)
+	}
+	defer reader.Close()
+
+	// Parse based on type
+	switch datasource.Type {
+	case domain.DatasourceTypeCSV:
+		return s.parseCSVPreview(reader, limit)
+	case domain.DatasourceTypeParquet:
+		// For parquet, we need the full file content
+		content, err := io.ReadAll(reader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read parquet file: %w", err)
+		}
+		return s.parseParquetPreview(content, limit)
+	default:
+		return nil, fmt.Errorf("unsupported file type for preview: %s", datasource.Type)
+	}
+}
+
+// parseCSVPreview parses CSV file and returns preview data
+func (s *DatasourceServiceImpl) parseCSVPreview(reader io.Reader, limit int) (*dto.DataPreviewResponse, error) {
+	csvReader := csv.NewReader(reader)
+	
+	// Read header
+	headers, err := csvReader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CSV header: %w", err)
+	}
+
+	// Read rows up to limit
+	rows := make([]map[string]interface{}, 0, limit)
+	totalRows := 0
+	for {
+		record, err := csvReader.Read()
+		if err != nil {
+			break // EOF or error
+		}
+		totalRows++
+		
+		if len(rows) < limit {
+			row := make(map[string]interface{})
+			for i, header := range headers {
+				if i < len(record) {
+					row[header] = record[i]
+				}
+			}
+			rows = append(rows, row)
+		}
+	}
+
+	return &dto.DataPreviewResponse{
+		Columns:    headers,
+		Rows:       rows,
+		TotalRows:  totalRows,
+		PreviewMax: limit,
+	}, nil
+}
+
+// parseParquetPreview parses Parquet file and returns preview data
+func (s *DatasourceServiceImpl) parseParquetPreview(content []byte, limit int) (*dto.DataPreviewResponse, error) {
+	// Create reader from bytes
+	reader := bytes.NewReader(content)
+	file, err := parquet.OpenFile(reader, int64(len(content)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to open parquet file: %w", err)
+	}
+
+	// Get schema to extract column names
+	schema := file.Schema()
+	columns := make([]string, 0, len(schema.Fields()))
+	for _, field := range schema.Fields() {
+		columns = append(columns, field.Name())
+	}
+
+	totalRows := int(file.NumRows())
+	rows := make([]map[string]interface{}, 0, limit)
+
+	// Read rows from row groups
+	for _, rowGroup := range file.RowGroups() {
+		rowReader := rowGroup.Rows()
+
+		// Read rows in small batches
+		batchSize := 10
+		if limit < batchSize {
+			batchSize = limit
+		}
+		rowBuf := make([]parquet.Row, batchSize)
+
+		for len(rows) < limit {
+			n, err := rowReader.ReadRows(rowBuf)
+			if err != nil && err != io.EOF {
+				rowReader.Close()
+				return nil, fmt.Errorf("failed to read parquet row: %w", err)
+			}
+			if n == 0 {
+				break
+			}
+
+			// Convert each row to map
+			for i := 0; i < n && len(rows) < limit; i++ {
+				rowMap := make(map[string]interface{})
+				for j, col := range columns {
+					if j < len(rowBuf[i]) {
+						rowMap[col] = parquetValueToGo(rowBuf[i][j])
+					}
+				}
+				rows = append(rows, rowMap)
+			}
+		}
+		rowReader.Close()
+
+		if len(rows) >= limit {
+			break
+		}
+	}
+
+	return &dto.DataPreviewResponse{
+		Columns:    columns,
+		Rows:       rows,
+		TotalRows:  totalRows,
+		PreviewMax: limit,
+	}, nil
+}
+
+// parquetValueToGo converts a parquet.Value to a native Go value
+func parquetValueToGo(v parquet.Value) interface{} {
+	if v.IsNull() {
+		return nil
+	}
+
+	switch v.Kind() {
+	case parquet.Boolean:
+		return v.Boolean()
+	case parquet.Int32:
+		return v.Int32()
+	case parquet.Int64:
+		return v.Int64()
+	case parquet.Float:
+		return v.Float()
+	case parquet.Double:
+		return v.Double()
+	case parquet.ByteArray, parquet.FixedLenByteArray:
+		return string(v.ByteArray())
+	default:
+		return v.String()
+	}
+}
+

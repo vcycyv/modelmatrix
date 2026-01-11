@@ -33,6 +33,7 @@ type FileService interface {
 	Save(filename string, reader io.Reader, size int64) (*FileInfo, error)
 	SaveWithPath(subPath, filename string, reader io.Reader, size int64) (*FileInfo, error)
 	Get(fileID string) (io.ReadCloser, *FileInfo, error)
+	ReadFileContent(fileID string) ([]byte, *FileInfo, error)
 	Delete(fileID string) error
 	Exists(fileID string) bool
 	GetInfo(fileID string) (*FileInfo, error)

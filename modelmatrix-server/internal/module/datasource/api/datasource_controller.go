@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"io"
+	"strconv"
 
 	"modelmatrix-server/internal/infrastructure/auth"
 	"modelmatrix-server/internal/module/datasource/application"
@@ -45,6 +46,9 @@ func (c *DatasourceController) RegisterRoutes(router *gin.RouterGroup, authMiddl
 		datasources.POST("/:id/columns", auth.RequireEditor(), c.CreateColumns)
 		datasources.PUT("/:id/columns/:column_id/role", auth.RequireEditor(), c.UpdateColumnRole)
 		datasources.PUT("/:id/columns/roles", auth.RequireEditor(), c.BulkUpdateColumnRoles)
+
+		// Data preview endpoint
+		datasources.GET("/:id/preview", auth.RequireViewer(), c.GetDataPreview)
 	}
 }
 
@@ -374,6 +378,39 @@ func (c *DatasourceController) BulkUpdateColumnRoles(ctx *gin.Context) {
 	}
 
 	result, err := c.columnService.BulkUpdateRoles(id, &req)
+	if err != nil {
+		handleError(ctx, err)
+		return
+	}
+
+	response.Success(ctx, result)
+}
+
+// GetDataPreview godoc
+// @Summary Get datasource data preview
+// @Description Returns a preview of the datasource data (first 100 rows by default)
+// @Tags Datasources
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param id path string true "Datasource ID (UUID)"
+// @Param limit query int false "Number of rows to preview (default 100, max 500)"
+// @Success 200 {object} response.Response{data=dto.DataPreviewResponse}
+// @Failure 401 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Router /api/datasources/{id}/preview [get]
+func (c *DatasourceController) GetDataPreview(ctx *gin.Context) {
+	id := ctx.Param("id")
+	
+	// Parse limit from query, default to 100
+	limit := 100
+	if limitStr := ctx.Query("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	result, err := c.datasourceService.GetDataPreview(id, limit)
 	if err != nil {
 		handleError(ctx, err)
 		return

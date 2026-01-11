@@ -665,12 +665,22 @@ func (s *ModelServiceImpl) HandleScoreCallback(req *dto.ScoreCallbackRequest) er
 	if req.Status == "completed" {
 		logger.Info("Scoring completed for model %s, output: %s, rows: %d", req.ModelID, req.OutputFilePath, req.RowCount)
 
+		// Clean file path - remove minio://bucket/ prefix if present
+		filePath := req.OutputFilePath
+		if strings.HasPrefix(filePath, "minio://") {
+			// Extract path after bucket name: minio://bucket/path -> path
+			parts := strings.SplitN(filePath, "/", 4) // ["minio:", "", "bucket", "path/to/file"]
+			if len(parts) >= 4 {
+				filePath = parts[3]
+			}
+		}
+
 		// Create output datasource if we have all required info
 		if s.datasourceCreator != nil && req.CollectionID != "" && req.TableName != "" {
 			dsID, err := s.datasourceCreator.CreateScoredOutput(
 				req.CollectionID,
 				req.TableName,
-				req.OutputFilePath,
+				filePath,
 				int(req.RowCount),
 				req.CreatedBy,
 			)

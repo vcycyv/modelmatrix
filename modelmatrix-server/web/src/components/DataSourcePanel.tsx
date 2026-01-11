@@ -27,6 +27,7 @@ interface Datasource {
 interface DataSourcePanelProps {
   onSelect?: (item: { type: 'collection' | 'datasource'; data: Collection | Datasource }) => void;
   refreshTrigger?: number;
+  externalSelectedDatasource?: { id: string; collection_id: string } | null;
 }
 
 // API functions (simplified - should be moved to api.ts)
@@ -806,7 +807,7 @@ function UploadFileDialog({
 }
 
 // Main DataSourcePanel Component
-export default function DataSourcePanel({ onSelect, refreshTrigger }: DataSourcePanelProps) {
+export default function DataSourcePanel({ onSelect, refreshTrigger, externalSelectedDatasource }: DataSourcePanelProps) {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [datasourcesByCollection, setDatasourcesByCollection] = useState<Record<string, Datasource[]>>({});
@@ -814,6 +815,26 @@ export default function DataSourcePanel({ onSelect, refreshTrigger }: DataSource
   const [selectedDatasourceId, setSelectedDatasourceId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [pendingExternalSelection, setPendingExternalSelection] = useState<{ id: string; collection_id: string } | null>(null);
+
+  // Handle external selection (e.g., when navigating from model details)
+  useEffect(() => {
+    if (externalSelectedDatasource && externalSelectedDatasource.id !== selectedDatasourceId) {
+      const { id, collection_id } = externalSelectedDatasource;
+      
+      // Update selection immediately
+      setSelectedDatasourceId(id);
+      setSelectedCollectionId(null);
+      
+      // Expand the collection
+      setExpandedIds(prev => new Set([...prev, collection_id]));
+      
+      // If collection's datasources aren't loaded yet, load them
+      if (!datasourcesByCollection[collection_id]) {
+        setPendingExternalSelection(externalSelectedDatasource);
+      }
+    }
+  }, [externalSelectedDatasource, selectedDatasourceId, datasourcesByCollection]);
 
   // Dialog states
   const [createCollectionOpen, setCreateCollectionOpen] = useState(false);
@@ -846,6 +867,25 @@ export default function DataSourcePanel({ onSelect, refreshTrigger }: DataSource
   useEffect(() => {
     loadCollections();
   }, [loadCollections, refreshTrigger]);
+
+  // Load datasources for newly expanded collections (including from external selection)
+  useEffect(() => {
+    expandedIds.forEach((collectionId) => {
+      if (!datasourcesByCollection[collectionId]) {
+        loadDatasources(collectionId);
+      }
+    });
+  }, [expandedIds, datasourcesByCollection, loadDatasources]);
+
+  // Clear pending selection once the datasources are loaded
+  useEffect(() => {
+    if (pendingExternalSelection) {
+      const { collection_id } = pendingExternalSelection;
+      if (datasourcesByCollection[collection_id]) {
+        setPendingExternalSelection(null);
+      }
+    }
+  }, [pendingExternalSelection, datasourcesByCollection]);
 
   // Reload all expanded collections' datasources when refreshTrigger changes
   useEffect(() => {

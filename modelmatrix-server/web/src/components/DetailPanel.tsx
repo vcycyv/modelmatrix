@@ -20,9 +20,10 @@ interface DetailPanelProps {
   onCancelBuild?: () => void;
   onDeleteDataNode?: () => void;
   onScoreModel?: () => void;
+  onNavigateToDatasource?: (datasource: Datasource) => void;
 }
 
-export default function DetailPanel({ node, dataNode, onEdit, onDelete, onBuildModel, onStartBuild, onCancelBuild, onDeleteDataNode, onScoreModel }: DetailPanelProps) {
+export default function DetailPanel({ node, dataNode, onEdit, onDelete, onBuildModel, onStartBuild, onCancelBuild, onDeleteDataNode, onScoreModel, onNavigateToDatasource }: DetailPanelProps) {
   // Determine which node to display (dataNode takes priority if present)
   const displayNode = dataNode || node;
   
@@ -158,7 +159,7 @@ export default function DetailPanel({ node, dataNode, onEdit, onDelete, onBuildM
         {node.type === 'folder' && <FolderDetails folder={node.data as Folder} />}
         {node.type === 'project' && <ProjectDetails project={node.data as Project} />}
         {node.type === 'build' && <BuildDetails build={node.data as ModelBuild} />}
-        {node.type === 'model' && <ModelDetails model={node.data as Model} />}
+        {node.type === 'model' && <ModelDetails model={node.data as Model} onNavigateToDatasource={onNavigateToDatasource} />}
       </div>
     </div>
   );
@@ -308,10 +309,30 @@ function BuildDetails({ build }: { build: ModelBuild }) {
   );
 }
 
-function ModelDetails({ model }: { model: Model }) {
+function ModelDetails({ model, onNavigateToDatasource }: { model: Model; onNavigateToDatasource?: (datasource: Datasource) => void }) {
   const [variables, setVariables] = useState<ModelVariable[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showVariables, setShowVariables] = useState(false);
+  const [datasource, setDatasource] = useState<Datasource | null>(null);
+  const [isLoadingDatasource, setIsLoadingDatasource] = useState(false);
+
+  // Load datasource info when model changes
+  useEffect(() => {
+    const loadDatasource = async () => {
+      if (!model.datasource_id) return;
+      setIsLoadingDatasource(true);
+      try {
+        const ds = await datasourceApi.get(model.datasource_id);
+        setDatasource(ds);
+      } catch (err) {
+        console.error('Failed to load datasource:', err);
+        setDatasource(null);
+      } finally {
+        setIsLoadingDatasource(false);
+      }
+    };
+    loadDatasource();
+  }, [model.id, model.datasource_id]);
 
   // Load variables when model changes or when showVariables is toggled on
   useEffect(() => {
@@ -373,7 +394,24 @@ function ModelDetails({ model }: { model: Model }) {
           />
         )}
         <InfoRow label="Build ID" value={<code className="text-xs bg-slate-100 px-2 py-1 rounded">{model.build_id}</code>} />
-        <InfoRow label="Datasource ID" value={<code className="text-xs bg-slate-100 px-2 py-1 rounded">{model.datasource_id}</code>} />
+        <InfoRow label="Datasource" value={
+          isLoadingDatasource ? (
+            <span className="text-slate-400 text-sm">Loading...</span>
+          ) : datasource ? (
+            <button
+              onClick={() => onNavigateToDatasource?.(datasource)}
+              className="inline-flex items-center text-blue-600 hover:text-blue-800 hover:underline text-sm font-medium"
+              title={`View datasource: ${datasource.name}`}
+            >
+              <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+              </svg>
+              {datasource.name}
+            </button>
+          ) : (
+            <code className="text-xs bg-slate-100 px-2 py-1 rounded">{model.datasource_id}</code>
+          )
+        } />
         <InfoRow label="Created By" value={model.created_by} />
         <InfoRow label="Created At" value={new Date(model.created_at).toLocaleString()} />
       </dl>
