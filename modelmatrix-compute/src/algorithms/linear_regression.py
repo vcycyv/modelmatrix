@@ -9,8 +9,18 @@ from src.algorithms.base import BaseAlgorithm
 class LinearRegressionAlgorithm(BaseAlgorithm):
     """Linear Regression for regression tasks."""
     
+    # Valid hyperparameters for Linear Regression variants
+    VALID_PARAMS = {
+        "fit_intercept", "copy_X", "n_jobs", "positive",  # LinearRegression
+        "alpha", "max_iter", "tol", "solver", "random_state",  # Ridge/Lasso
+        "selection", "warm_start"  # Lasso
+    }
+    
     def train(self, X: pd.DataFrame, y: pd.Series, hyperparameters: Dict[str, Any], model_type: str = "regression") -> Any:
         """Train a Linear Regression model."""
+        # Make a copy to avoid modifying the original
+        hyperparameters = hyperparameters.copy()
+        
         # Get regularization type (none, ridge, lasso)
         regularization = hyperparameters.pop("regularization", "none")
         
@@ -22,7 +32,9 @@ class LinearRegressionAlgorithm(BaseAlgorithm):
         if regularization in ["ridge", "lasso"]:
             params["alpha"] = hyperparameters.get("alpha", 1.0)
         
-        params.update(hyperparameters)
+        # Only update with valid hyperparameters
+        valid_hyperparams = {k: v for k, v in hyperparameters.items() if k in self.VALID_PARAMS}
+        params.update(valid_hyperparams)
         
         # Create model based on regularization
         if regularization == "ridge":

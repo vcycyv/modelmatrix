@@ -33,6 +33,9 @@ export default function MainPage() {
   const [dataRefreshTrigger, setDataRefreshTrigger] = useState(0);
   // For targeted node refresh (folder-specific refresh)
   const [refreshNode, setRefreshNode] = useState<{ id: string; type: 'folder' | 'project' } | null>(null);
+  // Explorer filters
+  const [hideBuilds, setHideBuilds] = useState(false);
+  const [hideModels, setHideModels] = useState(false);
 
   // Dialog states
   const [folderDialog, setFolderDialog] = useState<{
@@ -501,6 +504,18 @@ export default function MainPage() {
     });
   };
 
+  // Handle navigation to a build (from model details)
+  const handleNavigateToBuild = (build: ModelBuild) => {
+    // Switch to explorer tab and select the build
+    setActiveTab('explorer');
+    setSelectedNode({
+      id: build.id,
+      name: build.name,
+      type: 'build',
+      data: build,
+    });
+  };
+
   // Explorer tab content
   const explorerContent = (
     <div
@@ -558,6 +573,41 @@ export default function MainPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
           </button>
+          {/* Separator */}
+          <div className="w-px h-4 bg-slate-200 mx-1" />
+          
+          {/* Filter toggles */}
+          <button
+            onClick={() => setHideBuilds(!hideBuilds)}
+            className={`p-1.5 rounded transition-colors ${
+              hideBuilds
+                ? 'text-slate-300 bg-slate-100'
+                : 'text-purple-500 hover:text-purple-600 hover:bg-purple-50'
+            }`}
+            title={hideBuilds ? 'Show Builds' : 'Hide Builds'}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+          <button
+            onClick={() => setHideModels(!hideModels)}
+            className={`p-1.5 rounded transition-colors ${
+              hideModels
+                ? 'text-slate-300 bg-slate-100'
+                : 'text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50'
+            }`}
+            title={hideModels ? 'Show Models' : 'Hide Models'}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+            </svg>
+          </button>
+          
+          {/* Separator */}
+          <div className="w-px h-4 bg-slate-200 mx-1" />
+          
           <button
             onClick={refresh}
             className="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors"
@@ -580,6 +630,8 @@ export default function MainPage() {
           refreshNodeId={refreshNode?.id}
           refreshNodeType={refreshNode?.type}
           onNodeRefreshed={() => setRefreshNode(null)}
+          hideBuilds={hideBuilds}
+          hideModels={hideModels}
         />
       </div>
     </div>
@@ -716,6 +768,7 @@ export default function MainPage() {
             onDeleteDataNode={currentDataNode ? handleDeleteDataNode : undefined}
             onScoreModel={currentNode?.type === 'model' ? () => setScoreDialog({ isOpen: true, model: currentNode.data as Model }) : undefined}
             onNavigateToDatasource={handleNavigateToDatasource}
+            onNavigateToBuild={handleNavigateToBuild}
           />
         ) : (
           <DataPreviewPanel datasource={currentDataNode?.data as Datasource} />

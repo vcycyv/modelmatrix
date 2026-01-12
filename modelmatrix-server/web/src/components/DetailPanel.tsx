@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { TreeNode } from './TreeView';
-import { Folder, Project, ModelBuild, Model, ModelVariable, Collection, Datasource, Column, datasourceApi, modelApi } from '../lib/api';
+import { Folder, Project, ModelBuild, Model, ModelVariable, Collection, Datasource, Column, datasourceApi, modelApi, buildApi } from '../lib/api';
 
 // Extended node type that can include data items
 export interface DataNode {
@@ -21,9 +21,10 @@ interface DetailPanelProps {
   onDeleteDataNode?: () => void;
   onScoreModel?: () => void;
   onNavigateToDatasource?: (datasource: Datasource) => void;
+  onNavigateToBuild?: (build: ModelBuild) => void;
 }
 
-export default function DetailPanel({ node, dataNode, onEdit, onDelete, onBuildModel, onStartBuild, onCancelBuild, onDeleteDataNode, onScoreModel, onNavigateToDatasource }: DetailPanelProps) {
+export default function DetailPanel({ node, dataNode, onEdit, onDelete, onBuildModel, onStartBuild, onCancelBuild, onDeleteDataNode, onScoreModel, onNavigateToDatasource, onNavigateToBuild }: DetailPanelProps) {
   // Determine which node to display (dataNode takes priority if present)
   const displayNode = dataNode || node;
   
@@ -159,7 +160,7 @@ export default function DetailPanel({ node, dataNode, onEdit, onDelete, onBuildM
         {node.type === 'folder' && <FolderDetails folder={node.data as Folder} />}
         {node.type === 'project' && <ProjectDetails project={node.data as Project} />}
         {node.type === 'build' && <BuildDetails build={node.data as ModelBuild} />}
-        {node.type === 'model' && <ModelDetails model={node.data as Model} onNavigateToDatasource={onNavigateToDatasource} />}
+        {node.type === 'model' && <ModelDetails model={node.data as Model} onNavigateToDatasource={onNavigateToDatasource} onNavigateToBuild={onNavigateToBuild} />}
       </div>
     </div>
   );
@@ -309,12 +310,14 @@ function BuildDetails({ build }: { build: ModelBuild }) {
   );
 }
 
-function ModelDetails({ model, onNavigateToDatasource }: { model: Model; onNavigateToDatasource?: (datasource: Datasource) => void }) {
+function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild }: { model: Model; onNavigateToDatasource?: (datasource: Datasource) => void; onNavigateToBuild?: (build: ModelBuild) => void }) {
   const [variables, setVariables] = useState<ModelVariable[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showVariables, setShowVariables] = useState(false);
   const [datasource, setDatasource] = useState<Datasource | null>(null);
   const [isLoadingDatasource, setIsLoadingDatasource] = useState(false);
+  const [build, setBuild] = useState<ModelBuild | null>(null);
+  const [isLoadingBuild, setIsLoadingBuild] = useState(false);
 
   // Load datasource info when model changes
   useEffect(() => {
@@ -333,6 +336,24 @@ function ModelDetails({ model, onNavigateToDatasource }: { model: Model; onNavig
     };
     loadDatasource();
   }, [model.id, model.datasource_id]);
+
+  // Load build info when model changes
+  useEffect(() => {
+    const loadBuild = async () => {
+      if (!model.build_id) return;
+      setIsLoadingBuild(true);
+      try {
+        const b = await buildApi.get(model.build_id);
+        setBuild(b);
+      } catch (err) {
+        console.error('Failed to load build:', err);
+        setBuild(null);
+      } finally {
+        setIsLoadingBuild(false);
+      }
+    };
+    loadBuild();
+  }, [model.id, model.build_id]);
 
   // Load variables when model changes or when showVariables is toggled on
   useEffect(() => {
@@ -393,7 +414,25 @@ function ModelDetails({ model, onNavigateToDatasource }: { model: Model; onNavig
             } 
           />
         )}
-        <InfoRow label="Build ID" value={<code className="text-xs bg-slate-100 px-2 py-1 rounded">{model.build_id}</code>} />
+        <InfoRow label="Build" value={
+          isLoadingBuild ? (
+            <span className="text-slate-400 text-sm">Loading...</span>
+          ) : build ? (
+            <button
+              onClick={() => onNavigateToBuild?.(build)}
+              className="inline-flex items-center text-blue-600 hover:text-blue-800 hover:underline text-sm font-medium"
+              title={`View build: ${build.name}`}
+            >
+              <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              {build.name}
+            </button>
+          ) : (
+            <code className="text-xs bg-slate-100 px-2 py-1 rounded">{model.build_id}</code>
+          )
+        } />
         <InfoRow label="Datasource" value={
           isLoadingDatasource ? (
             <span className="text-slate-400 text-sm">Loading...</span>

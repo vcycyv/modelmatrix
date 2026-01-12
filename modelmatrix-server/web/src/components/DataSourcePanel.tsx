@@ -97,11 +97,15 @@ const datasourceApi = {
     return response.datasources || [];
   },
   upload: async (collectionId: string, file: File, name: string, description?: string) => {
+    // Determine type from file extension
+    const fileExt = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
+    const fileType = fileExt === '.parquet' ? 'parquet' : 'csv';
+    
     const formData = new FormData();
     formData.append('file', file);
     formData.append('name', name);
     formData.append('collection_id', collectionId);
-    formData.append('type', 'csv');
+    formData.append('type', fileType);
     if (description) formData.append('description', description);
     
     const token = getToken();

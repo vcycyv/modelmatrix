@@ -11,19 +11,28 @@ from src.algorithms.base import BaseAlgorithm
 class KMeansAlgorithm(BaseAlgorithm):
     """K-Means clustering algorithm."""
     
+    # Valid hyperparameters for KMeans
+    VALID_PARAMS = {
+        "n_clusters", "init", "n_init", "max_iter", "random_state",
+        "tol", "algorithm", "copy_x"
+    }
+    
     def train(self, X: pd.DataFrame, y: pd.Series, hyperparameters: Dict[str, Any], model_type: str = "clustering") -> Any:
         """
         Train a K-Means model.
         
         Note: For clustering, y is ignored (unsupervised learning).
         """
+        # Filter to valid hyperparameters only
+        valid_hyperparams = {k: v for k, v in hyperparameters.items() if k in self.VALID_PARAMS}
+        
         # Default hyperparameters
         params = {
-            "n_clusters": hyperparameters.get("n_clusters", 3),
-            "init": hyperparameters.get("init", "k-means++"),
-            "n_init": hyperparameters.get("n_init", 10),
-            "max_iter": hyperparameters.get("max_iter", 300),
-            "random_state": hyperparameters.get("random_state", 42),
+            "n_clusters": valid_hyperparams.get("n_clusters", 3),
+            "init": valid_hyperparams.get("init", "k-means++"),
+            "n_init": valid_hyperparams.get("n_init", 10),
+            "max_iter": valid_hyperparams.get("max_iter", 300),
+            "random_state": valid_hyperparams.get("random_state", 42),
         }
         
         # Create and train model

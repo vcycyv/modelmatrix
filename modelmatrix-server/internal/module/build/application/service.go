@@ -272,6 +272,14 @@ func (s *BuildServiceImpl) Start(id string) (*dto.BuildResponse, error) {
 	// Build callback URL for compute service to notify when done
 	callbackURL := fmt.Sprintf("%s/api/builds/callback", s.config.Server.BaseURL)
 
+	// Update build status to running BEFORE calling compute service
+	// This prevents race condition where callback arrives before status is updated
+	build.Start()
+	if err := s.buildRepo.Update(build); err != nil {
+		logger.Error("Failed to update build status to running: %v", err)
+		return nil, err
+	}
+
 	// Prepare compute service request
 	trainReq := &compute.TrainRequest{
 		DatasourceID:    build.DatasourceID,
@@ -297,18 +305,15 @@ func (s *BuildServiceImpl) Start(id string) (*dto.BuildResponse, error) {
 		return nil, fmt.Errorf("failed to start training job: %w", err)
 	}
 
-	// Update build status to running
-	build.Start()
-
 	// Store job ID in parameters (we'll use it for status polling)
 	if build.Parameters.Hyperparameters == nil {
 		build.Parameters.Hyperparameters = make(map[string]interface{})
 	}
 	build.Parameters.Hyperparameters["_job_id"] = trainResp.JobID
 
-	// Update via repository
+	// Update via repository with job ID
 	if err := s.buildRepo.Update(build); err != nil {
-		logger.Error("Failed to update build status: %v", err)
+		logger.Error("Failed to update build with job ID: %v", err)
 		return nil, err
 	}
 

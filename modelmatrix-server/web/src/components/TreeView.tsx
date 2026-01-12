@@ -22,6 +22,8 @@ interface TreeViewProps {
   refreshNodeId?: string; // ID of a specific node to refresh (folder or project)
   refreshNodeType?: TreeNodeType; // Type of the node to refresh
   onNodeRefreshed?: () => void; // Callback when node refresh is complete
+  hideBuilds?: boolean; // Filter out build nodes from display
+  hideModels?: boolean; // Filter out model nodes from display
 }
 
 // Icons for different node types
@@ -173,7 +175,7 @@ function TreeNodeItem({ node, level, selectedId, onSelect, onToggle, onContextMe
   );
 }
 
-export default function TreeView({ onSelect, selectedId, onContextMenu, refreshTrigger, refreshNodeId, refreshNodeType, onNodeRefreshed }: TreeViewProps) {
+export default function TreeView({ onSelect, selectedId, onContextMenu, refreshTrigger, refreshNodeId, refreshNodeType, onNodeRefreshed, hideBuilds = false, hideModels = false }: TreeViewProps) {
   const [rootNodes, setRootNodes] = useState<TreeNode[]>([]);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   // Track expanded nodes by "type-id" key to preserve state across refreshes
@@ -523,6 +525,31 @@ export default function TreeView({ onSelect, selectedId, onContextMenu, refreshT
     }
   };
 
+  // Filter nodes based on hideBuilds and hideModels settings
+  // Must be defined before any early returns to maintain hooks order
+  const filterNodes = useCallback((nodes: TreeNode[]): TreeNode[] => {
+    const filterRecursive = (nodeList: TreeNode[]): TreeNode[] => {
+      return nodeList
+        .filter((node) => {
+          if (hideBuilds && node.type === 'build') return false;
+          if (hideModels && node.type === 'model') return false;
+          return true;
+        })
+        .map((node) => {
+          if (node.children) {
+            return { ...node, children: filterRecursive(node.children) };
+          }
+          return node;
+        });
+    };
+    return filterRecursive(nodes);
+  }, [hideBuilds, hideModels]);
+
+  // Helper to check if a node is being refreshed
+  const isNodeRefreshing = useCallback((node: TreeNode) => {
+    return refreshingNodes.has(nodeKey(node.type, node.id));
+  }, [refreshingNodes]);
+
   // Only show full-page loading on initial load
   if (isInitialLoad && rootNodes.length === 0) {
     return (
@@ -548,14 +575,11 @@ export default function TreeView({ onSelect, selectedId, onContextMenu, refreshT
     );
   }
 
-  // Helper to check if a node is being refreshed
-  const isNodeRefreshing = (node: TreeNode) => {
-    return refreshingNodes.has(nodeKey(node.type, node.id));
-  };
+  const filteredNodes = filterNodes(rootNodes);
 
   return (
     <div className="py-2">
-      {rootNodes.map((node) => (
+      {filteredNodes.map((node) => (
         <TreeNodeItem
           key={`${node.type}-${node.id}`}
           node={node}

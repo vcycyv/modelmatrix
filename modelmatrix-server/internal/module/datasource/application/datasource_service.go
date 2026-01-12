@@ -674,44 +674,59 @@ func (s *DatasourceServiceImpl) parseParquetPreview(content []byte, limit int) (
 	}
 
 	totalRows := int(file.NumRows())
-	rows := make([]map[string]interface{}, 0, limit)
+	rowsToRead := limit
+	if totalRows < limit {
+		rowsToRead = totalRows
+	}
 
-	// Read rows from row groups
-	for _, rowGroup := range file.RowGroups() {
-		rowReader := rowGroup.Rows()
+	// Initialize rows with empty maps
+	rows := make([]map[string]interface{}, rowsToRead)
+	for i := range rows {
+		rows[i] = make(map[string]interface{})
+	}
 
-		// Read rows in small batches
-		batchSize := 10
-		if limit < batchSize {
-			batchSize = limit
-		}
-		rowBuf := make([]parquet.Row, batchSize)
+	// Read data column by column - this handles optional/nullable fields better
+	for colIdx, colName := range columns {
+		rowIdx := 0
 
-		for len(rows) < limit {
-			n, err := rowReader.ReadRows(rowBuf)
-			if err != nil && err != io.EOF {
-				rowReader.Close()
-				return nil, fmt.Errorf("failed to read parquet row: %w", err)
-			}
-			if n == 0 {
+		for _, rowGroup := range file.RowGroups() {
+			if rowIdx >= rowsToRead {
 				break
 			}
 
-			// Convert each row to map
-			for i := 0; i < n && len(rows) < limit; i++ {
-				rowMap := make(map[string]interface{})
-				for j, col := range columns {
-					if j < len(rowBuf[i]) {
-						rowMap[col] = parquetValueToGo(rowBuf[i][j])
+			chunks := rowGroup.ColumnChunks()
+			if colIdx >= len(chunks) {
+				continue
+			}
+
+			chunk := chunks[colIdx]
+			pages := chunk.Pages()
+
+			for rowIdx < rowsToRead {
+				page, err := pages.ReadPage()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					break // Skip problematic pages
+				}
+
+				values := page.Values()
+				valueBuf := make([]parquet.Value, 100)
+
+				for rowIdx < rowsToRead {
+					n, err := values.ReadValues(valueBuf)
+					if n == 0 || (err != nil && err != io.EOF) {
+						break
+					}
+
+					for i := 0; i < n && rowIdx < rowsToRead; i++ {
+						rows[rowIdx][colName] = parquetValueToGo(valueBuf[i])
+						rowIdx++
 					}
 				}
-				rows = append(rows, rowMap)
 			}
-		}
-		rowReader.Close()
-
-		if len(rows) >= limit {
-			break
+			pages.Close()
 		}
 	}
 
