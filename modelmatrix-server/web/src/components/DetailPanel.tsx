@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { TreeNode } from './TreeView';
-import { Folder, Project, ModelBuild, Model, ModelVariable, Collection, Datasource, Column, datasourceApi, modelApi, buildApi } from '../lib/api';
+import { Folder, Project, ModelBuild, Model, ModelVariable, ModelFile, Collection, Datasource, Column, datasourceApi, modelApi, buildApi } from '../lib/api';
 
 // Extended node type that can include data items
 export interface DataNode {
@@ -312,12 +312,27 @@ function BuildDetails({ build }: { build: ModelBuild }) {
 
 function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild }: { model: Model; onNavigateToDatasource?: (datasource: Datasource) => void; onNavigateToBuild?: (build: ModelBuild) => void }) {
   const [variables, setVariables] = useState<ModelVariable[]>([]);
+  const [files, setFiles] = useState<ModelFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showVariables, setShowVariables] = useState(false);
   const [datasource, setDatasource] = useState<Datasource | null>(null);
   const [isLoadingDatasource, setIsLoadingDatasource] = useState(false);
   const [build, setBuild] = useState<ModelBuild | null>(null);
   const [isLoadingBuild, setIsLoadingBuild] = useState(false);
+
+  // Load files when model changes
+  useEffect(() => {
+    const loadFiles = async () => {
+      try {
+        const detail = await modelApi.getDetail(model.id);
+        setFiles(detail.files || []);
+      } catch (err) {
+        console.error('Failed to load model files:', err);
+        setFiles([]);
+      }
+    };
+    loadFiles();
+  }, [model.id]);
 
   // Load datasource info when model changes
   useEffect(() => {
@@ -388,7 +403,12 @@ function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild }: { mo
   useEffect(() => {
     setVariables([]);
     setShowVariables(false);
+    setFiles([]);
   }, [model.id]);
+
+  // Find training code file
+  const trainingCodeFile = files.find(f => f.file_type === 'training_code');
+  const modelFile = files.find(f => f.file_type === 'model');
 
   return (
     <div className="space-y-6">
@@ -454,6 +474,51 @@ function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild }: { mo
         <InfoRow label="Created By" value={model.created_by} />
         <InfoRow label="Created At" value={new Date(model.created_at).toLocaleString()} />
       </dl>
+
+      {/* Model Files Section */}
+      {(modelFile || trainingCodeFile) && (
+        <div className="border-t border-slate-200 pt-4">
+          <h3 className="text-sm font-semibold text-slate-700 mb-3">Model Files</h3>
+          <div className="space-y-2">
+            {modelFile && (
+              <div className="flex items-center justify-between p-2 bg-slate-50 rounded-md">
+                <div className="flex items-center space-x-2">
+                  <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <div>
+                    <span className="text-sm font-medium text-slate-700">Model File</span>
+                    <p className="text-xs text-slate-500 font-mono truncate max-w-xs" title={modelFile.file_name}>
+                      {modelFile.file_name}
+                    </p>
+                  </div>
+                </div>
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">
+                  .pkl
+                </span>
+              </div>
+            )}
+            {trainingCodeFile && (
+              <div className="flex items-center justify-between p-2 bg-slate-50 rounded-md">
+                <div className="flex items-center space-x-2">
+                  <svg className="w-4 h-4 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                  </svg>
+                  <div>
+                    <span className="text-sm font-medium text-slate-700">Training Code</span>
+                    <p className="text-xs text-slate-500 font-mono truncate max-w-xs" title={trainingCodeFile.file_name}>
+                      {trainingCodeFile.file_name}
+                    </p>
+                  </div>
+                </div>
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-700">
+                  .py
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Model Variables Section */}
       <div className="border-t border-slate-200 pt-4">

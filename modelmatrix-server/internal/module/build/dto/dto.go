@@ -119,6 +119,7 @@ type BuildCallbackRequest struct {
 	JobID              string                 `json:"job_id" binding:"required"`
 	Status             string                 `json:"status" binding:"required,oneof=completed failed"`
 	ModelPath          *string                `json:"model_path,omitempty"`
+	CodePath           *string                `json:"code_path,omitempty"`           // Path to training code in MinIO
 	Metrics            map[string]interface{} `json:"metrics,omitempty"`
 	FeatureNames       []string               `json:"feature_names,omitempty"`       // Actual input features used by the model
 	FeatureCount       *int                   `json:"feature_count,omitempty"`       // Number of features

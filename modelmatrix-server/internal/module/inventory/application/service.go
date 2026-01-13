@@ -285,6 +285,20 @@ func (s *ModelServiceImpl) CreateFromBuild(req *dto.CreateModelFromBuildRequest)
 		}
 	}
 
+	// Create training code file
+	if req.CodeFilePath != "" {
+		codeFile := domain.ModelFile{
+			ModelID:     model.ID,
+			FileType:    domain.FileTypeTrainingCode,
+			FilePath:    req.CodeFilePath,
+			FileName:    filepath.Base(req.CodeFilePath),
+			Description: "Python code used to train this model",
+		}
+		if err := s.modelRepo.CreateFile(&codeFile); err != nil {
+			logger.Error("Failed to create training code file: %v", err)
+		}
+	}
+
 	logger.Audit(req.CreatedBy, "create_from_build", "model", model.ID, "success", nil)
 	logger.Info("Created model %s from build %s", model.ID, req.BuildID)
 

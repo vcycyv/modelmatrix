@@ -147,12 +147,25 @@ class ModelTrainer:
                 model_type=model_type,
             )
             
+            # Save training code
+            logger.info("Saving training code...")
+            code_path = self.model_saver.save_training_code(
+                job_id=job_id,
+                algorithm=algorithm,
+                hyperparameters=hyperparameters,
+                target_column=target_column if model_type != "clustering" else None,
+                input_columns=input_columns,
+                model_type=model_type,
+                file_path=file_path,
+            )
+            
             logger.info(f"Training completed successfully. Job ID: {job_id}")
             
             return {
                 "job_id": job_id,
                 "status": "completed",
                 "model_path": model_path,
+                "code_path": code_path,
                 "metrics": metrics,
                 "feature_names": feature_names,
                 "feature_count": len(feature_names),
@@ -218,6 +231,7 @@ class ModelTrainer:
                 "job_id": result.get("job_id"),
                 "status": result.get("status", "failed"),
                 "model_path": result.get("model_path"),
+                "code_path": result.get("code_path"),
                 "metrics": result.get("metrics"),
                 "feature_names": result.get("feature_names"),
                 "feature_count": result.get("feature_count"),

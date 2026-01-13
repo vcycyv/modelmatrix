@@ -162,6 +162,7 @@ type CreateModelFromBuildRequest struct {
 	InputColumns       []string           // Model input variables (preprocessing is part of scoring logic)
 	FeatureImportances map[string]float64 // Feature name -> importance score (0 = unused)
 	ModelFilePath      string
+	CodeFilePath       string // Path to training code in MinIO
 	Metrics            map[string]interface{}
 	CreatedBy          string
 }

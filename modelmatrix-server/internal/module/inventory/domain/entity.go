@@ -75,10 +75,11 @@ const (
 type FileType string
 
 const (
-	FileTypeModel        FileType = "model"        // Main trained model (.pkl)
-	FileTypePreprocessor FileType = "preprocessor" // Feature preprocessor
-	FileTypeMetadata     FileType = "metadata"     // Model metadata JSON
+	FileTypeModel        FileType = "model"         // Main trained model (.pkl)
+	FileTypePreprocessor FileType = "preprocessor"  // Feature preprocessor
+	FileTypeMetadata     FileType = "metadata"      // Model metadata JSON
 	FileTypeFeatureNames FileType = "feature_names" // Feature names list
+	FileTypeTrainingCode FileType = "training_code" // Python code used to train the model
 )
 
 // Model represents a trained ML model (Domain Entity)

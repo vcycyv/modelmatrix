@@ -40,6 +40,64 @@ const ALGORITHMS: Record<string, { value: string; label: string }[]> = {
   ],
 };
 
+// Hyperparameter definitions per algorithm
+interface HyperparamDef {
+  key: string;
+  label: string;
+  type: 'number' | 'select';
+  default: number | string;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: { value: string; label: string }[];
+  tooltip?: string;
+}
+
+const HYPERPARAMETERS: Record<string, HyperparamDef[]> = {
+  random_forest: [
+    { key: 'n_estimators', label: 'Number of Trees', type: 'number', default: 100, min: 10, max: 500, step: 10, tooltip: 'Number of trees in the forest' },
+    { key: 'max_depth', label: 'Max Depth', type: 'number', default: 10, min: 1, max: 50, step: 1, tooltip: 'Maximum depth of each tree' },
+    { key: 'min_samples_split', label: 'Min Samples Split', type: 'number', default: 2, min: 2, max: 20, step: 1, tooltip: 'Minimum samples to split a node' },
+    { key: 'min_samples_leaf', label: 'Min Samples Leaf', type: 'number', default: 1, min: 1, max: 10, step: 1, tooltip: 'Minimum samples in a leaf node' },
+  ],
+  decision_tree: [
+    { key: 'max_depth', label: 'Max Depth', type: 'number', default: 10, min: 1, max: 50, step: 1, tooltip: 'Maximum depth of the tree' },
+    { key: 'min_samples_split', label: 'Min Samples Split', type: 'number', default: 2, min: 2, max: 20, step: 1, tooltip: 'Minimum samples to split a node' },
+    { key: 'min_samples_leaf', label: 'Min Samples Leaf', type: 'number', default: 1, min: 1, max: 10, step: 1, tooltip: 'Minimum samples in a leaf node' },
+    { key: 'criterion', label: 'Split Criterion', type: 'select', default: 'gini', options: [
+      { value: 'gini', label: 'Gini Impurity' },
+      { value: 'entropy', label: 'Entropy' },
+    ], tooltip: 'Function to measure split quality' },
+  ],
+  xgboost: [
+    { key: 'n_estimators', label: 'Number of Trees', type: 'number', default: 100, min: 10, max: 500, step: 10, tooltip: 'Number of boosting rounds' },
+    { key: 'max_depth', label: 'Max Depth', type: 'number', default: 6, min: 1, max: 20, step: 1, tooltip: 'Maximum tree depth' },
+    { key: 'learning_rate', label: 'Learning Rate', type: 'number', default: 0.1, min: 0.01, max: 1, step: 0.01, tooltip: 'Boosting learning rate (eta)' },
+    { key: 'min_child_weight', label: 'Min Child Weight', type: 'number', default: 1, min: 1, max: 10, step: 1, tooltip: 'Minimum sum of instance weight in child' },
+  ],
+  linear_regression: [
+    { key: 'regularization', label: 'Regularization', type: 'select', default: 'none', options: [
+      { value: 'none', label: 'None (OLS)' },
+      { value: 'ridge', label: 'Ridge (L2)' },
+      { value: 'lasso', label: 'Lasso (L1)' },
+    ], tooltip: 'Type of regularization' },
+    { key: 'alpha', label: 'Alpha (Regularization Strength)', type: 'number', default: 1.0, min: 0.01, max: 10, step: 0.1, tooltip: 'Regularization strength (only for Ridge/Lasso)' },
+  ],
+  polynomial_regression: [
+    { key: 'degree', label: 'Polynomial Degree', type: 'number', default: 2, min: 2, max: 5, step: 1, tooltip: 'Degree of polynomial features' },
+    { key: 'regularization', label: 'Regularization', type: 'select', default: 'ridge', options: [
+      { value: 'none', label: 'None' },
+      { value: 'ridge', label: 'Ridge (L2)' },
+    ], tooltip: 'Ridge helps prevent overfitting' },
+    { key: 'alpha', label: 'Alpha', type: 'number', default: 1.0, min: 0.01, max: 10, step: 0.1, tooltip: 'Regularization strength' },
+  ],
+  kmeans: [
+    { key: 'n_clusters', label: 'Number of Clusters', type: 'number', default: 3, min: 2, max: 20, step: 1, tooltip: 'Number of clusters to form' },
+    { key: 'max_iter', label: 'Max Iterations', type: 'number', default: 300, min: 100, max: 1000, step: 50, tooltip: 'Maximum iterations for a single run' },
+    { key: 'n_init', label: 'Number of Initializations', type: 'number', default: 10, min: 1, max: 30, step: 1, tooltip: 'Number of times to run with different centroid seeds' },
+  ],
+};
+
 export default function BuildModelDialog({
   isOpen,
   onClose,
@@ -60,9 +118,21 @@ export default function BuildModelDialog({
   const [modelType, setModelType] = useState<'classification' | 'regression' | 'clustering'>('classification');
   const [algorithm, setAlgorithm] = useState('random_forest');
   const [trainTestSplit, setTrainTestSplit] = useState(0.8);
+  const [hyperparameters, setHyperparameters] = useState<Record<string, number | string>>({});
+  const [showHyperparams, setShowHyperparams] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [showColumns, setShowColumns] = useState(false);
+
+  // Initialize hyperparameters when algorithm changes
+  useEffect(() => {
+    const params = HYPERPARAMETERS[algorithm] || [];
+    const defaults: Record<string, number | string> = {};
+    params.forEach(p => {
+      defaults[p.key] = p.default;
+    });
+    setHyperparameters(defaults);
+  }, [algorithm]);
 
   const [collections, setCollections] = useState<Collection[]>([]);
   const [datasources, setDatasources] = useState<Datasource[]>([]);
@@ -191,6 +261,7 @@ export default function BuildModelDialog({
         algorithm,
         parameters: {
           train_test_split: trainTestSplit,
+          hyperparameters: hyperparameters,
         },
       });
 
@@ -211,6 +282,8 @@ export default function BuildModelDialog({
     setModelType('classification');
     setAlgorithm('random_forest');
     setTrainTestSplit(0.8);
+    setHyperparameters({});
+    setShowHyperparams(false);
     setError('');
     setColumns([]);
     setShowColumns(false);
@@ -364,9 +437,20 @@ export default function BuildModelDialog({
 
         {/* Algorithm */}
         <div>
-          <label className="block text-xs font-medium text-slate-600 mb-1">
-            Algorithm <span className="text-red-500">*</span>
-          </label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-xs font-medium text-slate-600">
+              Algorithm <span className="text-red-500">*</span>
+            </label>
+            {HYPERPARAMETERS[algorithm]?.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowHyperparams(!showHyperparams)}
+                className="text-xs text-blue-600 hover:text-blue-700"
+              >
+                {showHyperparams ? 'Hide' : 'Show'} Hyperparameters
+              </button>
+            )}
+          </div>
           <select
             value={algorithm}
             onChange={(e) => setAlgorithm(e.target.value)}
@@ -380,6 +464,70 @@ export default function BuildModelDialog({
             ))}
           </select>
         </div>
+
+        {/* Hyperparameters (collapsible) */}
+        {showHyperparams && HYPERPARAMETERS[algorithm]?.length > 0 && (
+          <div className="bg-slate-50 rounded-lg p-3 border border-slate-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-700">Hyperparameters</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const defaults: Record<string, number | string> = {};
+                  HYPERPARAMETERS[algorithm].forEach(p => { defaults[p.key] = p.default; });
+                  setHyperparameters(defaults);
+                }}
+                className="text-xs text-slate-500 hover:text-slate-700"
+              >
+                Reset to defaults
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {HYPERPARAMETERS[algorithm].map((param) => (
+                <div key={param.key}>
+                  <label className="block text-xs text-slate-500 mb-1" title={param.tooltip}>
+                    {param.label}
+                    {param.tooltip && (
+                      <span className="ml-1 text-slate-400 cursor-help" title={param.tooltip}>ⓘ</span>
+                    )}
+                  </label>
+                  {param.type === 'number' ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={hyperparameters[param.key] ?? param.default}
+                        onChange={(e) => setHyperparameters(prev => ({
+                          ...prev,
+                          [param.key]: param.step && param.step < 1 ? parseFloat(e.target.value) : parseInt(e.target.value, 10)
+                        }))}
+                        min={param.min}
+                        max={param.max}
+                        step={param.step}
+                        className="flex-1 px-2 py-1.5 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                      <span className="text-xs text-slate-400 w-16 text-right">
+                        {param.min}–{param.max}
+                      </span>
+                    </div>
+                  ) : (
+                    <select
+                      value={hyperparameters[param.key] ?? param.default}
+                      onChange={(e) => setHyperparameters(prev => ({
+                        ...prev,
+                        [param.key]: e.target.value
+                      }))}
+                      className="w-full px-2 py-1.5 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      {param.options?.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Row 3: Train/Test Split (compact) */}
         <div>

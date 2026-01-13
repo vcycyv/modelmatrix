@@ -457,6 +457,12 @@ func (s *BuildServiceImpl) createModelFromBuild(build *domain.ModelBuild, callba
 		modelFilePath = *callback.ModelPath
 	}
 
+	// Get code file path
+	var codeFilePath string
+	if callback.CodePath != nil {
+		codeFilePath = *callback.CodePath
+	}
+
 	// Model input columns come from callback (subset of datasource input columns)
 	// If not provided, fall back to datasource input columns
 	modelInputColumns := callback.FeatureNames
@@ -480,6 +486,7 @@ func (s *BuildServiceImpl) createModelFromBuild(build *domain.ModelBuild, callba
 		InputColumns:       modelInputColumns,
 		FeatureImportances: callback.FeatureImportances,
 		ModelFilePath:      modelFilePath,
+		CodeFilePath:       codeFilePath,
 		Metrics:            callback.Metrics,
 		CreatedBy:          build.CreatedBy,
 	}
