@@ -35,6 +35,13 @@ type ModelService interface {
 	Score(modelID string, req *dto.ScoreRequest, scoredBy string) (*dto.ScoreResponse, error)
 	HandleScoreCallback(req *dto.ScoreCallbackRequest) error
 	ConfigureScoring(computeClient compute.Client, datasourceGetter DatasourceGetter, datasourceCreator DatasourceCreator, cfg *config.Config)
+
+	// File operations
+	GetFileContent(modelID string, fileID string) (*dto.FileContentResponse, error)
+
+	// Folder/Project cascade operations
+	DeleteByFolderID(folderID string) error
+	DeleteByProjectID(projectID string) error
 }
 
 // DatasourceGetter interface for getting datasource details (to avoid circular imports)
@@ -385,6 +392,38 @@ func (s *ModelServiceImpl) Delete(id string) error {
 	return nil
 }
 
+// DeleteByFolderID deletes all models directly in a folder
+func (s *ModelServiceImpl) DeleteByFolderID(folderID string) error {
+	ids, err := s.modelRepo.GetIDsByFolderID(folderID)
+	if err != nil {
+		return fmt.Errorf("failed to get models in folder: %w", err)
+	}
+
+	for _, id := range ids {
+		if err := s.Delete(id); err != nil {
+			logger.Warn("Failed to delete model %s: %v", id, err)
+			// Continue deleting others
+		}
+	}
+	return nil
+}
+
+// DeleteByProjectID deletes all models in a project
+func (s *ModelServiceImpl) DeleteByProjectID(projectID string) error {
+	ids, err := s.modelRepo.GetIDsByProjectID(projectID)
+	if err != nil {
+		return fmt.Errorf("failed to get models in project: %w", err)
+	}
+
+	for _, id := range ids {
+		if err := s.Delete(id); err != nil {
+			logger.Warn("Failed to delete model %s: %v", id, err)
+			// Continue deleting others
+		}
+	}
+	return nil
+}
+
 // GetByID retrieves a model by ID with variables and files
 func (s *ModelServiceImpl) GetByID(id string) (*dto.ModelDetailResponse, error) {
 	model, err := s.modelRepo.GetByIDWithRelations(id)
@@ -471,6 +510,147 @@ func (s *ModelServiceImpl) Deactivate(id string) (*dto.ModelResponse, error) {
 	}
 
 	return toModelResponse(model), nil
+}
+
+// GetFileContent retrieves the content of a model file (for text files only)
+func (s *ModelServiceImpl) GetFileContent(modelID string, fileID string) (*dto.FileContentResponse, error) {
+	// Get the model to ensure it exists and verify file belongs to it
+	model, err := s.modelRepo.GetByIDWithRelations(modelID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Find the file in the model's files
+	var targetFile *domain.ModelFile
+	for i := range model.Files {
+		if model.Files[i].ID == fileID {
+			targetFile = &model.Files[i]
+			break
+		}
+	}
+
+	if targetFile == nil {
+		return nil, domain.ErrFileNotFound
+	}
+
+	// Check if it's a text-based file type
+	isTextFile := isTextFileType(targetFile.FileName, string(targetFile.FileType))
+	if !isTextFile {
+		return &dto.FileContentResponse{
+			FileID:      targetFile.ID,
+			FileName:    targetFile.FileName,
+			FileType:    string(targetFile.FileType),
+			ContentType: "application/octet-stream",
+			Content:     "",
+			Size:        getFileSize(targetFile.FileSize),
+			IsText:      false,
+		}, nil
+	}
+
+	// Extract object key from file path (strip minio://bucket/ prefix if present)
+	objectKey := targetFile.FilePath
+	if strings.HasPrefix(objectKey, "minio://") {
+		parts := strings.SplitN(objectKey, "/", 4) // ["minio:", "", "bucket", "path"]
+		if len(parts) >= 4 {
+			objectKey = parts[3]
+		}
+	}
+
+	// Read file content
+	content, fileInfo, err := s.fileService.ReadFileContent(objectKey)
+	if err != nil {
+		logger.Error("Failed to read file content: %v", err)
+		return nil, fmt.Errorf("failed to read file content: %w", err)
+	}
+
+	contentType := getContentTypeFromFileName(targetFile.FileName)
+
+	return &dto.FileContentResponse{
+		FileID:      targetFile.ID,
+		FileName:    targetFile.FileName,
+		FileType:    string(targetFile.FileType),
+		ContentType: contentType,
+		Content:     string(content),
+		Size:        fileInfo.Size,
+		IsText:      true,
+	}, nil
+}
+
+// isTextFileType checks if a file is a text-based file that can be displayed
+func isTextFileType(fileName string, fileType string) bool {
+	// Check by file type
+	if fileType == "training_code" || fileType == "metadata" || fileType == "feature_names" {
+		return true
+	}
+
+	// Check by file extension
+	ext := strings.ToLower(filepath.Ext(fileName))
+	textExtensions := map[string]bool{
+		".py":   true,
+		".txt":  true,
+		".json": true,
+		".yaml": true,
+		".yml":  true,
+		".md":   true,
+		".csv":  true,
+		".log":  true,
+		".xml":  true,
+		".html": true,
+		".css":  true,
+		".js":   true,
+		".ts":   true,
+		".sql":  true,
+		".sh":   true,
+		".r":    true,
+		".ipynb": true,
+	}
+
+	return textExtensions[ext]
+}
+
+// getContentTypeFromFileName returns the content type based on file extension
+func getContentTypeFromFileName(fileName string) string {
+	ext := strings.ToLower(filepath.Ext(fileName))
+	switch ext {
+	case ".py":
+		return "text/x-python"
+	case ".json":
+		return "application/json"
+	case ".yaml", ".yml":
+		return "text/yaml"
+	case ".md":
+		return "text/markdown"
+	case ".csv":
+		return "text/csv"
+	case ".txt", ".log":
+		return "text/plain"
+	case ".xml":
+		return "text/xml"
+	case ".html":
+		return "text/html"
+	case ".css":
+		return "text/css"
+	case ".js":
+		return "text/javascript"
+	case ".ts":
+		return "text/typescript"
+	case ".sql":
+		return "text/sql"
+	case ".sh":
+		return "text/x-shellscript"
+	case ".r":
+		return "text/x-r"
+	default:
+		return "text/plain"
+	}
+}
+
+// getFileSize safely gets file size from pointer
+func getFileSize(size *int64) int64 {
+	if size == nil {
+		return 0
+	}
+	return *size
 }
 
 // convertMetrics converts map to domain metrics struct

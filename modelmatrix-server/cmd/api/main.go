@@ -32,8 +32,9 @@ import (
 	invRepo "modelmatrix-server/internal/module/inventory/repository"
 
 	// Folder module
-	"modelmatrix-server/internal/infrastructure/folderservice"
 	folderApi "modelmatrix-server/internal/module/folder/api"
+	folderApp "modelmatrix-server/internal/module/folder/application"
+	folderRepo "modelmatrix-server/internal/module/folder/repository"
 
 	"modelmatrix-server/pkg/config"
 	"modelmatrix-server/pkg/logger"
@@ -144,7 +145,7 @@ func main() {
 	columnRepo := dsRepo.NewColumnRepository(database)
 	externalDBConnector := dbconnector.NewExternalDBConnector()
 
-	collectionService := dsApp.NewCollectionService(collectionRepo, dsDomainService)
+	collectionService := dsApp.NewCollectionService(collectionRepo, datasourceRepo, dsDomainService, fileService)
 	datasourceService := dsApp.NewDatasourceService(database, datasourceRepo, collectionRepo, columnRepo, dsDomainService, fileService, externalDBConnector)
 	columnService := dsApp.NewColumnService(database, columnRepo, datasourceRepo, dsDomainService)
 
@@ -163,11 +164,21 @@ func main() {
 	modelService := invApp.NewModelService(modelRepo, invDomainService, fileService)
 	modelController := invApi.NewModelController(modelService)
 
+	// --- Performance Monitoring (part of inventory module) ---
+	performanceRepo := invRepo.NewPerformanceRepository(database)
+	performanceService := invApp.NewPerformanceService(performanceRepo, modelRepo)
+	performanceController := invApi.NewPerformanceController(performanceService)
+
 	// Register model manage routes
 	modelController.RegisterRoutes(api, authMiddleware)
 
+	// Register performance monitoring routes
+	performanceController.RegisterRoutes(api, authMiddleware)
+
 	// --- Folder Module (initialized early as it's needed by build service) ---
-	folderSvc := folderservice.NewFolderService(database)
+	folderRepoImpl := folderRepo.NewFolderRepository(database)
+	projectRepoImpl := folderRepo.NewProjectRepository(database)
+	folderSvc := folderApp.NewFolderService(database, folderRepoImpl, projectRepoImpl)
 
 	// --- Model Build Module ---
 	buildDomainService := buildDomain.NewService()
@@ -176,13 +187,19 @@ func main() {
 	// Initialize compute service client
 	computeClient := compute.NewClient(&cfg.Compute)
 
-
 	// Configure scoring for model service
 	dsGetter := &datasourceGetterAdapter{svc: datasourceService}
 	dsCreator := &datasourceCreatorAdapter{svc: datasourceService}
 	modelService.ConfigureScoring(computeClient, dsGetter, dsCreator, cfg)
+
+	// Configure compute for performance service
+	performanceService.ConfigureCompute(computeClient, dsGetter, cfg)
 	buildService := buildApp.NewBuildService(buildRepo, buildDomainService, computeClient, datasourceService, modelService, folderSvc, cfg)
 	buildController := buildApi.NewBuildController(buildService)
+
+	// Wire up cascade delete dependencies (after services are created)
+	folderSvc.SetModelDeleter(modelService)
+	folderSvc.SetBuildDeleter(buildService)
 
 	// Register model build routes
 	buildController.RegisterRoutes(api, authMiddleware)

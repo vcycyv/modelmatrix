@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { TreeNode } from './TreeView';
-import { Folder, Project, ModelBuild, Model, ModelVariable, ModelFile, Collection, Datasource, Column, datasourceApi, modelApi, buildApi } from '../lib/api';
+import { Folder, Project, ModelBuild, Model, ModelVariable, ModelFile, Collection, Datasource, Column, datasourceApi, modelApi, buildApi, FileContentResponse } from '../lib/api';
+import PerformanceMonitorPanel from './PerformanceMonitorPanel';
 
 // Extended node type that can include data items
 export interface DataNode {
@@ -310,15 +311,23 @@ function BuildDetails({ build }: { build: ModelBuild }) {
   );
 }
 
+type ModelDetailTab = 'details' | 'variables' | 'files' | 'performance';
+
 function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild }: { model: Model; onNavigateToDatasource?: (datasource: Datasource) => void; onNavigateToBuild?: (build: ModelBuild) => void }) {
+  const [activeTab, setActiveTab] = useState<ModelDetailTab>('details');
   const [variables, setVariables] = useState<ModelVariable[]>([]);
   const [files, setFiles] = useState<ModelFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [showVariables, setShowVariables] = useState(false);
   const [datasource, setDatasource] = useState<Datasource | null>(null);
   const [isLoadingDatasource, setIsLoadingDatasource] = useState(false);
   const [build, setBuild] = useState<ModelBuild | null>(null);
   const [isLoadingBuild, setIsLoadingBuild] = useState(false);
+  
+  // File viewer state
+  const [viewingFile, setViewingFile] = useState<ModelFile | null>(null);
+  const [fileContent, setFileContent] = useState<FileContentResponse | null>(null);
+  const [isLoadingContent, setIsLoadingContent] = useState(false);
+  const [contentError, setContentError] = useState<string | null>(null);
 
   // Load files when model changes
   useEffect(() => {
@@ -370,9 +379,10 @@ function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild }: { mo
     loadBuild();
   }, [model.id, model.build_id]);
 
-  // Load variables when model changes or when showVariables is toggled on
+  // Load variables when switching to variables tab
   useEffect(() => {
-    if (!showVariables) return;
+    if (activeTab !== 'variables') return;
+    if (variables.length > 0) return; // Already loaded
     
     const loadVariables = async () => {
       setIsLoading(true);
@@ -397,150 +407,213 @@ function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild }: { mo
     };
     
     loadVariables();
-  }, [model.id, showVariables]);
+  }, [model.id, activeTab, variables.length]);
 
   // Reset when model changes
   useEffect(() => {
     setVariables([]);
-    setShowVariables(false);
+    setActiveTab('details');
     setFiles([]);
+    setViewingFile(null);
+    setFileContent(null);
+    setContentError(null);
   }, [model.id]);
+
+  // Function to check if a file is viewable (text-based)
+  const isTextFile = (file: ModelFile) => {
+    const textTypes = ['training_code', 'metadata', 'feature_names'];
+    if (textTypes.includes(file.file_type)) return true;
+    
+    const textExtensions = ['.py', '.txt', '.json', '.yaml', '.yml', '.md', '.csv', '.log', '.xml', '.html', '.css', '.js', '.ts', '.sql', '.sh', '.r'];
+    const ext = file.file_name.toLowerCase().substring(file.file_name.lastIndexOf('.'));
+    return textExtensions.includes(ext);
+  };
+
+  // Function to load file content
+  const handleViewFile = async (file: ModelFile) => {
+    setViewingFile(file);
+    setIsLoadingContent(true);
+    setContentError(null);
+    setFileContent(null);
+    
+    try {
+      const content = await modelApi.getFileContent(model.id, file.id);
+      setFileContent(content);
+    } catch (err) {
+      console.error('Failed to load file content:', err);
+      setContentError(err instanceof Error ? err.message : 'Failed to load file content');
+    } finally {
+      setIsLoadingContent(false);
+    }
+  };
+
+  // Function to close file viewer
+  const handleCloseViewer = () => {
+    setViewingFile(null);
+    setFileContent(null);
+    setContentError(null);
+  };
+
+  // Get syntax highlighting language from file name
+  const getLanguage = (fileName: string): string => {
+    const ext = fileName.toLowerCase().substring(fileName.lastIndexOf('.'));
+    const langMap: Record<string, string> = {
+      '.py': 'python',
+      '.js': 'javascript',
+      '.ts': 'typescript',
+      '.json': 'json',
+      '.yaml': 'yaml',
+      '.yml': 'yaml',
+      '.md': 'markdown',
+      '.sql': 'sql',
+      '.html': 'html',
+      '.css': 'css',
+      '.sh': 'bash',
+      '.r': 'r',
+    };
+    return langMap[ext] || 'text';
+  };
 
   // Find training code file
   const trainingCodeFile = files.find(f => f.file_type === 'training_code');
   const modelFile = files.find(f => f.file_type === 'model');
 
+  const tabs: { id: ModelDetailTab; label: string; icon: React.ReactNode }[] = [
+    {
+      id: 'details',
+      label: 'Details',
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+    },
+    {
+      id: 'variables',
+      label: 'Variables',
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+        </svg>
+      ),
+    },
+    {
+      id: 'files',
+      label: 'Files',
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+      ),
+    },
+    {
+      id: 'performance',
+      label: 'Performance',
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      <dl>
-        <InfoRow label="Status" value={<StatusBadge status={model.status} />} />
-        <InfoRow label="Description" value={model.description} />
-        <InfoRow label="Algorithm" value={model.algorithm} />
-        <InfoRow label="Model Type" value={model.model_type} />
-        <InfoRow label="Target Column" value={model.target_column} />
-        <InfoRow label="Version" value={model.version} />
-        {model.metrics && Object.keys(model.metrics).length > 0 && (
-          <InfoRow 
-            label="Metrics" 
-            value={
-              <div className="space-y-1">
-                {Object.entries(model.metrics).map(([key, value]) => (
-                  <div key={key} className="flex justify-between text-sm">
-                    <span className="text-slate-500">{key}:</span>
-                    <span className="font-mono">{typeof value === 'number' ? value.toFixed(4) : value}</span>
+    <div className="space-y-4">
+      {/* Tab Navigation */}
+      <div className="border-b border-slate-200">
+        <nav className="-mb-px flex space-x-4" aria-label="Tabs">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`group inline-flex items-center py-3 px-1 border-b-2 font-medium text-sm transition-colors ${
+                activeTab === tab.id
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+              }`}
+            >
+              <span className={`mr-2 ${activeTab === tab.id ? 'text-blue-500' : 'text-slate-400 group-hover:text-slate-500'}`}>
+                {tab.icon}
+              </span>
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {/* Tab Content */}
+      <div className="pt-2">
+        {/* Details Tab */}
+        {activeTab === 'details' && (
+          <dl>
+            <InfoRow label="Status" value={<StatusBadge status={model.status} />} />
+            <InfoRow label="Description" value={model.description} />
+            <InfoRow label="Algorithm" value={model.algorithm} />
+            <InfoRow label="Model Type" value={model.model_type} />
+            <InfoRow label="Target Column" value={model.target_column} />
+            <InfoRow label="Version" value={model.version} />
+            {model.metrics && Object.keys(model.metrics).length > 0 && (
+              <InfoRow 
+                label="Metrics" 
+                value={
+                  <div className="space-y-1">
+                    {Object.entries(model.metrics).map(([key, value]) => (
+                      <div key={key} className="flex justify-between text-sm">
+                        <span className="text-slate-500">{key}:</span>
+                        <span className="font-mono">{typeof value === 'number' ? value.toFixed(4) : value}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            } 
-          />
+                } 
+              />
+            )}
+            <InfoRow label="Build" value={
+              isLoadingBuild ? (
+                <span className="text-slate-400 text-sm">Loading...</span>
+              ) : build ? (
+                <button
+                  onClick={() => onNavigateToBuild?.(build)}
+                  className="inline-flex items-center text-blue-600 hover:text-blue-800 hover:underline text-sm font-medium"
+                  title={`View build: ${build.name}`}
+                >
+                  <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  {build.name}
+                </button>
+              ) : (
+                <code className="text-xs bg-slate-100 px-2 py-1 rounded">{model.build_id}</code>
+              )
+            } />
+            <InfoRow label="Datasource" value={
+              isLoadingDatasource ? (
+                <span className="text-slate-400 text-sm">Loading...</span>
+              ) : datasource ? (
+                <button
+                  onClick={() => onNavigateToDatasource?.(datasource)}
+                  className="inline-flex items-center text-blue-600 hover:text-blue-800 hover:underline text-sm font-medium"
+                  title={`View datasource: ${datasource.name}`}
+                >
+                  <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                  </svg>
+                  {datasource.name}
+                </button>
+              ) : (
+                <code className="text-xs bg-slate-100 px-2 py-1 rounded">{model.datasource_id}</code>
+              )
+            } />
+            <InfoRow label="Created By" value={model.created_by} />
+            <InfoRow label="Created At" value={new Date(model.created_at).toLocaleString()} />
+          </dl>
         )}
-        <InfoRow label="Build" value={
-          isLoadingBuild ? (
-            <span className="text-slate-400 text-sm">Loading...</span>
-          ) : build ? (
-            <button
-              onClick={() => onNavigateToBuild?.(build)}
-              className="inline-flex items-center text-blue-600 hover:text-blue-800 hover:underline text-sm font-medium"
-              title={`View build: ${build.name}`}
-            >
-              <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              {build.name}
-            </button>
-          ) : (
-            <code className="text-xs bg-slate-100 px-2 py-1 rounded">{model.build_id}</code>
-          )
-        } />
-        <InfoRow label="Datasource" value={
-          isLoadingDatasource ? (
-            <span className="text-slate-400 text-sm">Loading...</span>
-          ) : datasource ? (
-            <button
-              onClick={() => onNavigateToDatasource?.(datasource)}
-              className="inline-flex items-center text-blue-600 hover:text-blue-800 hover:underline text-sm font-medium"
-              title={`View datasource: ${datasource.name}`}
-            >
-              <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
-              </svg>
-              {datasource.name}
-            </button>
-          ) : (
-            <code className="text-xs bg-slate-100 px-2 py-1 rounded">{model.datasource_id}</code>
-          )
-        } />
-        <InfoRow label="Created By" value={model.created_by} />
-        <InfoRow label="Created At" value={new Date(model.created_at).toLocaleString()} />
-      </dl>
 
-      {/* Model Files Section */}
-      {(modelFile || trainingCodeFile) && (
-        <div className="border-t border-slate-200 pt-4">
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">Model Files</h3>
-          <div className="space-y-2">
-            {modelFile && (
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded-md">
-                <div className="flex items-center space-x-2">
-                  <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  <div>
-                    <span className="text-sm font-medium text-slate-700">Model File</span>
-                    <p className="text-xs text-slate-500 font-mono truncate max-w-xs" title={modelFile.file_name}>
-                      {modelFile.file_name}
-                    </p>
-                  </div>
-                </div>
-                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">
-                  .pkl
-                </span>
-              </div>
-            )}
-            {trainingCodeFile && (
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded-md">
-                <div className="flex items-center space-x-2">
-                  <svg className="w-4 h-4 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                  </svg>
-                  <div>
-                    <span className="text-sm font-medium text-slate-700">Training Code</span>
-                    <p className="text-xs text-slate-500 font-mono truncate max-w-xs" title={trainingCodeFile.file_name}>
-                      {trainingCodeFile.file_name}
-                    </p>
-                  </div>
-                </div>
-                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-700">
-                  .py
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Model Variables Section */}
-      <div className="border-t border-slate-200 pt-4">
-        <button
-          onClick={() => setShowVariables(!showVariables)}
-          className="flex items-center justify-between w-full text-left"
-        >
-          <h3 className="text-sm font-semibold text-slate-700">Model Variables</h3>
-          <svg
-            className={`w-5 h-5 text-slate-400 transition-transform ${showVariables ? 'rotate-180' : ''}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-
-        {showVariables && (
-          <div className="mt-3">
+        {/* Variables Tab */}
+        {activeTab === 'variables' && (
+          <div>
             {isLoading ? (
-              <div className="flex items-center justify-center py-4">
+              <div className="flex items-center justify-center py-8">
                 <svg className="animate-spin h-5 w-5 text-blue-600" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
@@ -610,11 +683,189 @@ function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild }: { mo
                 </table>
               </div>
             ) : (
-              <p className="text-sm text-slate-500 py-2">No variables available</p>
+              <div className="text-center py-8">
+                <svg className="w-12 h-12 mx-auto text-slate-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                </svg>
+                <p className="text-sm text-slate-500">No variables available</p>
+              </div>
             )}
           </div>
         )}
+
+        {/* Files Tab */}
+        {activeTab === 'files' && (
+          <div>
+            {(modelFile || trainingCodeFile) ? (
+              <div className="space-y-3">
+                {modelFile && (
+                  <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 bg-blue-100 rounded-lg">
+                        <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-slate-700">Model File</span>
+                        <p className="text-xs text-slate-500 font-mono truncate max-w-xs" title={modelFile.file_name}>
+                          {modelFile.file_name}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-blue-100 text-blue-700">
+                        .pkl
+                      </span>
+                      <span className="text-xs text-slate-400">Binary</span>
+                    </div>
+                  </div>
+                )}
+                {trainingCodeFile && (
+                  <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 bg-yellow-100 rounded-lg">
+                        <svg className="w-5 h-5 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                        </svg>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-slate-700">Training Code</span>
+                        <p className="text-xs text-slate-500 font-mono truncate max-w-xs" title={trainingCodeFile.file_name}>
+                          {trainingCodeFile.file_name}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-yellow-100 text-yellow-700">
+                        .py
+                      </span>
+                      {isTextFile(trainingCodeFile) && (
+                        <button
+                          onClick={() => handleViewFile(trainingCodeFile)}
+                          className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+                        >
+                          <svg className="w-3.5 h-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                          View
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <svg className="w-12 h-12 mx-auto text-slate-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <p className="text-sm text-slate-500">No files available</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Performance Tab */}
+        {activeTab === 'performance' && (
+          <PerformanceMonitorPanel 
+            modelId={model.id} 
+            modelType={model.model_type} 
+            modelMetrics={model.metrics}
+          />
+        )}
       </div>
+
+      {/* File Viewer Modal */}
+      {viewingFile && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex min-h-screen items-center justify-center px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+            {/* Background overlay */}
+            <div 
+              className="fixed inset-0 bg-slate-900/60 transition-opacity"
+              onClick={handleCloseViewer}
+            />
+
+            {/* Modal panel */}
+            <div className="inline-block align-bottom bg-white rounded-xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full">
+              {/* Header */}
+              <div className="bg-slate-800 px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2 bg-slate-700 rounded-lg">
+                    <svg className="w-5 h-5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">{viewingFile.file_name}</h3>
+                    <p className="text-sm text-slate-400">
+                      {viewingFile.file_type === 'training_code' ? 'Training Code' : viewingFile.file_type}
+                      {fileContent && ` • ${(fileContent.size / 1024).toFixed(1)} KB`}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleCloseViewer}
+                  className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="bg-slate-900 max-h-[70vh] overflow-auto">
+                {isLoadingContent ? (
+                  <div className="flex items-center justify-center py-16">
+                    <svg className="animate-spin h-8 w-8 text-blue-500" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span className="ml-3 text-slate-400">Loading file content...</span>
+                  </div>
+                ) : contentError ? (
+                  <div className="flex flex-col items-center justify-center py-16">
+                    <svg className="w-12 h-12 text-red-500 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <p className="text-red-400 text-sm">{contentError}</p>
+                  </div>
+                ) : fileContent && !fileContent.is_text ? (
+                  <div className="flex flex-col items-center justify-center py-16">
+                    <svg className="w-12 h-12 text-slate-500 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <p className="text-slate-400 text-sm">This is a binary file and cannot be displayed as text.</p>
+                  </div>
+                ) : fileContent ? (
+                  <div className="relative">
+                    {/* Language badge */}
+                    <div className="absolute top-3 right-3 px-2 py-1 bg-slate-700 rounded text-xs text-slate-300 font-mono">
+                      {getLanguage(viewingFile.file_name)}
+                    </div>
+                    {/* Code content */}
+                    <pre className="p-6 text-sm font-mono text-slate-100 overflow-x-auto leading-relaxed">
+                      <code>{fileContent.content}</code>
+                    </pre>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Footer */}
+              <div className="bg-slate-50 px-6 py-3 flex justify-end">
+                <button
+                  onClick={handleCloseViewer}
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

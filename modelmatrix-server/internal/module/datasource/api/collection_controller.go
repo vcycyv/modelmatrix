@@ -154,12 +154,13 @@ func (c *CollectionController) Update(ctx *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a collection
-// @Description Deletes a collection (admin only)
+// @Description Deletes a collection (admin only). Use force=true to delete collections with datasources.
 // @Tags Collections
 // @Accept json
 // @Produce json
 // @Param Authorization header string true "Bearer token"
 // @Param id path string true "Collection ID (UUID)"
+// @Param force query bool false "Force delete even if collection has datasources"
 // @Success 204 "No Content"
 // @Failure 401 {object} response.Response
 // @Failure 403 {object} response.Response
@@ -168,8 +169,9 @@ func (c *CollectionController) Update(ctx *gin.Context) {
 // @Router /api/collections/{id} [delete]
 func (c *CollectionController) Delete(ctx *gin.Context) {
 	id := ctx.Param("id")
+	force := ctx.Query("force") == "true"
 
-	if err := c.collectionService.Delete(id); err != nil {
+	if err := c.collectionService.Delete(id, force); err != nil {
 		handleError(ctx, err)
 		return
 	}

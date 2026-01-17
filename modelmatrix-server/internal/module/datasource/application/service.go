@@ -9,7 +9,7 @@ import (
 type CollectionService interface {
 	Create(req *dto.CreateCollectionRequest, createdBy string) (*dto.CollectionResponse, error)
 	Update(id string, req *dto.UpdateCollectionRequest) (*dto.CollectionResponse, error)
-	Delete(id string) error
+	Delete(id string, force bool) error
 	GetByID(id string) (*dto.CollectionResponse, error)
 	List(params *dto.ListParams) (*dto.CollectionListResponse, error)
 }

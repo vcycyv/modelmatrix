@@ -195,3 +195,16 @@ func (r *BuildRepositoryImpl) toDomain(m *model.ModelBuildModel) *domain.ModelBu
 	return build
 }
 
+// GetIDsByFolderID returns build IDs directly in a folder
+func (r *BuildRepositoryImpl) GetIDsByFolderID(folderID string) ([]string, error) {
+	var ids []string
+	err := r.db.Model(&model.ModelBuildModel{}).Where("folder_id = ?", folderID).Pluck("id", &ids).Error
+	return ids, err
+}
+
+// GetIDsByProjectID returns build IDs in a project
+func (r *BuildRepositoryImpl) GetIDsByProjectID(projectID string) ([]string, error) {
+	var ids []string
+	err := r.db.Model(&model.ModelBuildModel{}).Where("project_id = ?", projectID).Pluck("id", &ids).Error
+	return ids, err
+}

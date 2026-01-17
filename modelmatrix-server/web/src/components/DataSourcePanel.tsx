@@ -8,6 +8,7 @@ interface Collection {
   created_by: string;
   created_at: string;
   updated_at: string;
+  datasource_count: number;
 }
 
 interface Datasource {
@@ -83,7 +84,8 @@ const collectionApi = {
   },
   create: (data: { name: string; description?: string }) =>
     apiRequest<Collection>('/collections', { method: 'POST', body: JSON.stringify(data) }),
-  delete: (id: string) => apiRequest<void>(`/collections/${id}`, { method: 'DELETE' }),
+  delete: (id: string, force?: boolean) => 
+    apiRequest<void>(`/collections/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
 };
 
 interface DatasourceListResponse {
@@ -960,9 +962,14 @@ export default function DataSourcePanel({ onSelect, refreshTrigger, externalSele
 
   // Context menu actions
   const handleDeleteCollection = async (collection: Collection) => {
-    if (!confirm(`Delete collection "${collection.name}"? This will also delete all data sources in it.`)) return;
+    const hasDatasources = collection.datasource_count > 0;
+    const message = hasDatasources
+      ? `Warning: This collection contains ${collection.datasource_count} data source${collection.datasource_count > 1 ? 's' : ''}. Deleting this collection will remove all data sources in it. Are you sure you want to continue?`
+      : `Delete collection "${collection.name}"? This action cannot be undone.`;
+    
+    if (!confirm(message)) return;
     try {
-      await collectionApi.delete(collection.id);
+      await collectionApi.delete(collection.id, hasDatasources);
       loadCollections();
     } catch (error) {
       console.error('Failed to delete collection:', error);

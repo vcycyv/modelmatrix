@@ -117,3 +117,49 @@ class ScoreResponse(BaseModel):
     status: str = Field(..., description="Job status")
     message: str = Field(..., description="Status message")
 
+
+class EvaluateRequest(BaseModel):
+    """Request schema for performance evaluation."""
+    evaluation_id: str = Field(..., description="Evaluation UUID")
+    model_id: str = Field(..., description="Model UUID")
+    model_file_path: str = Field(..., description="Path to model file in MinIO")
+    datasource_file_path: str = Field(..., description="Path to evaluation data with actuals")
+    input_columns: List[str] = Field(..., description="List of input feature columns")
+    target_column: str = Field(..., description="Target column name in model")
+    actual_column: str = Field(..., description="Column containing actual values in evaluation data")
+    prediction_column: Optional[str] = Field(None, description="Column containing predictions (if already scored)")
+    model_type: str = Field(..., description="Model type (classification, regression)")
+    callback_url: Optional[str] = Field(None, description="URL to call when evaluation completes")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "evaluation_id": "550e8400-e29b-41d4-a716-446655440000",
+                "model_id": "660e8400-e29b-41d4-a716-446655440001",
+                "model_file_path": "minio://modelmatrix/models/random_forest/abc123.pkl",
+                "datasource_file_path": "minio://modelmatrix/datasources/eval_data.parquet",
+                "input_columns": ["feature1", "feature2", "feature3"],
+                "target_column": "target",
+                "actual_column": "actual_target",
+                "model_type": "classification",
+                "callback_url": "http://localhost:8080/api/models/660e8400/performance/evaluations/550e8400/callback"
+            }
+        }
+
+
+class EvaluateResponse(BaseModel):
+    """Response schema for evaluation request."""
+    job_id: str = Field(..., description="Evaluation job ID")
+    status: str = Field(..., description="Job status")
+    message: str = Field(..., description="Status message")
+
+
+class EvaluationMetricsResponse(BaseModel):
+    """Response schema for evaluation metrics (callback payload)."""
+    evaluation_id: str = Field(..., description="Evaluation UUID")
+    model_id: str = Field(..., description="Model UUID")
+    status: str = Field(..., description="completed or failed")
+    metrics: Optional[Dict[str, Any]] = Field(None, description="Computed metrics")
+    sample_count: int = Field(0, description="Number of samples evaluated")
+    error: Optional[str] = Field(None, description="Error message if failed")
+

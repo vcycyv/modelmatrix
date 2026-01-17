@@ -388,3 +388,17 @@ func (r *ModelRepositoryImpl) fileToDomain(f *model.ModelFileModel) *domain.Mode
 		CreatedAt:   f.CreatedAt,
 	}
 }
+
+// GetIDsByFolderID returns model IDs directly in a folder
+func (r *ModelRepositoryImpl) GetIDsByFolderID(folderID string) ([]string, error) {
+	var ids []string
+	err := r.db.Model(&model.ModelModel{}).Where("folder_id = ?", folderID).Pluck("id", &ids).Error
+	return ids, err
+}
+
+// GetIDsByProjectID returns model IDs in a project
+func (r *ModelRepositoryImpl) GetIDsByProjectID(projectID string) ([]string, error) {
+	var ids []string
+	err := r.db.Model(&model.ModelModel{}).Where("project_id = ?", projectID).Pluck("id", &ids).Error
+	return ids, err
+}

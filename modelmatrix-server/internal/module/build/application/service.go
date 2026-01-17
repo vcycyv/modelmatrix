@@ -5,12 +5,12 @@ import (
 	"strings"
 
 	"modelmatrix-server/internal/infrastructure/compute"
-	"modelmatrix-server/internal/infrastructure/folderservice"
 	"modelmatrix-server/internal/module/build/domain"
 	"modelmatrix-server/internal/module/build/dto"
 	"modelmatrix-server/internal/module/build/repository"
 	dsApp "modelmatrix-server/internal/module/datasource/application"
 	dsDomain "modelmatrix-server/internal/module/datasource/domain"
+	folderApp "modelmatrix-server/internal/module/folder/application"
 	invApp "modelmatrix-server/internal/module/inventory/application"
 	invDto "modelmatrix-server/internal/module/inventory/dto"
 	"modelmatrix-server/pkg/config"
@@ -27,6 +27,10 @@ type BuildService interface {
 	Start(id string) (*dto.BuildResponse, error)
 	Cancel(id string) (*dto.BuildResponse, error)
 	HandleCallback(req *dto.BuildCallbackRequest) error
+
+	// Folder/Project cascade operations
+	DeleteByFolderID(folderID string) error
+	DeleteByProjectID(projectID string) error
 }
 
 // BuildServiceImpl implements BuildService
@@ -36,7 +40,7 @@ type BuildServiceImpl struct {
 	computeClient     compute.Client
 	datasourceService dsApp.DatasourceService
 	modelService      invApp.ModelService
-	folderService     folderservice.FolderService
+	folderService     folderApp.FolderService
 	config            *config.Config
 }
 
@@ -47,7 +51,7 @@ func NewBuildService(
 	computeClient compute.Client,
 	datasourceService dsApp.DatasourceService,
 	modelService invApp.ModelService,
-	folderSvc folderservice.FolderService,
+	folderSvc folderApp.FolderService,
 	cfg *config.Config,
 ) BuildService {
 	return &BuildServiceImpl{
@@ -184,6 +188,38 @@ func (s *BuildServiceImpl) Delete(id string) error {
 		return err
 	}
 
+	return nil
+}
+
+// DeleteByFolderID deletes all builds directly in a folder
+func (s *BuildServiceImpl) DeleteByFolderID(folderID string) error {
+	ids, err := s.buildRepo.GetIDsByFolderID(folderID)
+	if err != nil {
+		return fmt.Errorf("failed to get builds in folder: %w", err)
+	}
+
+	for _, id := range ids {
+		if err := s.Delete(id); err != nil {
+			logger.Warn("Failed to delete build %s: %v", id, err)
+			// Continue deleting others
+		}
+	}
+	return nil
+}
+
+// DeleteByProjectID deletes all builds in a project
+func (s *BuildServiceImpl) DeleteByProjectID(projectID string) error {
+	ids, err := s.buildRepo.GetIDsByProjectID(projectID)
+	if err != nil {
+		return fmt.Errorf("failed to get builds in project: %w", err)
+	}
+
+	for _, id := range ids {
+		if err := s.Delete(id); err != nil {
+			logger.Warn("Failed to delete build %s: %v", id, err)
+			// Continue deleting others
+		}
+	}
 	return nil
 }
 

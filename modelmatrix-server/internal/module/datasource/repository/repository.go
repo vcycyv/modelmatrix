@@ -9,6 +9,7 @@ type CollectionRepository interface {
 	Create(collection *domain.Collection) error
 	Update(collection *domain.Collection) error
 	Delete(id string) error
+	DeleteWithDatasources(id string) error
 	GetByID(id string) (*domain.Collection, error)
 	GetByName(name string) (*domain.Collection, error)
 	List(offset, limit int, search string) ([]domain.Collection, int64, error)

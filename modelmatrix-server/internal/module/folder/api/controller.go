@@ -2,8 +2,9 @@ package api
 
 import (
 	"modelmatrix-server/internal/infrastructure/auth"
-	"modelmatrix-server/internal/infrastructure/folderservice"
 	buildApp "modelmatrix-server/internal/module/build/application"
+	"modelmatrix-server/internal/module/folder/application"
+	"modelmatrix-server/internal/module/folder/domain"
 	invApp "modelmatrix-server/internal/module/inventory/application"
 	"modelmatrix-server/pkg/response"
 
@@ -12,14 +13,14 @@ import (
 
 // FolderController handles folder and project HTTP requests
 type FolderController struct {
-	folderService folderservice.FolderService
+	folderService application.FolderService
 	buildService  buildApp.BuildService
 	modelService  invApp.ModelService
 }
 
 // NewFolderController creates a new folder controller
 func NewFolderController(
-	folderService folderservice.FolderService,
+	folderService application.FolderService,
 	buildService buildApp.BuildService,
 	modelService invApp.ModelService,
 ) *FolderController {
@@ -41,6 +42,7 @@ func (c *FolderController) RegisterRoutes(router *gin.RouterGroup, authMiddlewar
 		folders.GET("/:id", auth.RequireViewer(), c.GetFolder)
 		folders.PUT("/:id", auth.RequireEditor(), c.UpdateFolder)
 		folders.DELETE("/:id", auth.RequireAdmin(), c.DeleteFolder)
+		folders.GET("/:id/contents-count", auth.RequireViewer(), c.GetFolderContentsCount)
 		folders.GET("/:id/children", auth.RequireViewer(), c.GetFolderChildren)
 		folders.GET("/:id/projects", auth.RequireViewer(), c.GetProjectsInFolder)
 		folders.GET("/:id/builds", auth.RequireViewer(), c.GetBuildsInFolder)
@@ -85,7 +87,7 @@ type UpdateFolderRequest struct {
 // @Accept json
 // @Produce json
 // @Param Authorization header string true "Bearer token"
-// @Success 200 {object} response.Response{data=[]folderservice.Folder}
+// @Success 200 {object} response.Response{data=[]domain.Folder}
 // @Failure 401 {object} response.Response
 // @Router /api/folders [get]
 func (c *FolderController) ListRootFolders(ctx *gin.Context) {
@@ -105,7 +107,7 @@ func (c *FolderController) ListRootFolders(ctx *gin.Context) {
 // @Produce json
 // @Param Authorization header string true "Bearer token"
 // @Param folder body CreateFolderRequest true "Folder data"
-// @Success 201 {object} response.Response{data=folderservice.Folder}
+// @Success 201 {object} response.Response{data=domain.Folder}
 // @Failure 400 {object} response.Response
 // @Failure 401 {object} response.Response
 // @Failure 409 {object} response.Response
@@ -135,7 +137,7 @@ func (c *FolderController) CreateFolder(ctx *gin.Context) {
 // @Produce json
 // @Param Authorization header string true "Bearer token"
 // @Param id path string true "Folder ID (UUID)"
-// @Success 200 {object} response.Response{data=folderservice.Folder}
+// @Success 200 {object} response.Response{data=domain.Folder}
 // @Failure 401 {object} response.Response
 // @Failure 404 {object} response.Response
 // @Router /api/folders/{id} [get]
@@ -160,7 +162,7 @@ func (c *FolderController) GetFolder(ctx *gin.Context) {
 // @Param Authorization header string true "Bearer token"
 // @Param id path string true "Folder ID (UUID)"
 // @Param folder body UpdateFolderRequest true "Folder update data"
-// @Success 200 {object} response.Response{data=folderservice.Folder}
+// @Success 200 {object} response.Response{data=domain.Folder}
 // @Failure 400 {object} response.Response
 // @Failure 401 {object} response.Response
 // @Failure 404 {object} response.Response
@@ -209,6 +211,30 @@ func (c *FolderController) DeleteFolder(ctx *gin.Context) {
 	response.Success(ctx, gin.H{"message": "folder deleted"})
 }
 
+// GetFolderContentsCount godoc
+// @Summary Get folder contents count
+// @Description Returns counts of subfolders, projects, models, and builds in a folder and its descendants
+// @Tags folders
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param id path string true "Folder ID (UUID)"
+// @Success 200 {object} response.Response{data=domain.FolderContentsCount}
+// @Failure 401 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Router /api/folders/{id}/contents-count [get]
+func (c *FolderController) GetFolderContentsCount(ctx *gin.Context) {
+	id := ctx.Param("id")
+
+	counts, err := c.folderService.GetFolderContentsCount(id)
+	if err != nil {
+		handleFolderError(ctx, err)
+		return
+	}
+
+	response.Success(ctx, counts)
+}
+
 // GetFolderChildren godoc
 // @Summary Get folder children
 // @Description Returns all direct child folders of a folder
@@ -217,7 +243,7 @@ func (c *FolderController) DeleteFolder(ctx *gin.Context) {
 // @Produce json
 // @Param Authorization header string true "Bearer token"
 // @Param id path string true "Folder ID (UUID)"
-// @Success 200 {object} response.Response{data=[]folderservice.Folder}
+// @Success 200 {object} response.Response{data=[]domain.Folder}
 // @Failure 401 {object} response.Response
 // @Failure 404 {object} response.Response
 // @Router /api/folders/{id}/children [get]
@@ -241,7 +267,7 @@ func (c *FolderController) GetFolderChildren(ctx *gin.Context) {
 // @Produce json
 // @Param Authorization header string true "Bearer token"
 // @Param id path string true "Folder ID (UUID)"
-// @Success 200 {object} response.Response{data=[]folderservice.Project}
+// @Success 200 {object} response.Response{data=[]domain.Project}
 // @Failure 401 {object} response.Response
 // @Failure 404 {object} response.Response
 // @Router /api/folders/{id}/projects [get]
@@ -280,14 +306,13 @@ type UpdateProjectRequest struct {
 // @Produce json
 // @Param Authorization header string true "Bearer token"
 // @Param root query bool false "If true, return only root projects"
-// @Success 200 {object} response.Response{data=[]folderservice.Project}
+// @Success 200 {object} response.Response{data=[]domain.Project}
 // @Failure 401 {object} response.Response
 // @Router /api/projects [get]
 func (c *FolderController) ListProjects(ctx *gin.Context) {
 	root := ctx.Query("root")
 
 	if root == "true" {
-		// Get root projects (not in any folder)
 		projects, err := c.folderService.GetRootProjects()
 		if err != nil {
 			response.InternalError(ctx, err.Error())
@@ -297,8 +322,6 @@ func (c *FolderController) ListProjects(ctx *gin.Context) {
 		return
 	}
 
-	// If no filter, could return all projects or error
-	// For now, return root projects
 	projects, err := c.folderService.GetRootProjects()
 	if err != nil {
 		response.InternalError(ctx, err.Error())
@@ -315,7 +338,7 @@ func (c *FolderController) ListProjects(ctx *gin.Context) {
 // @Produce json
 // @Param Authorization header string true "Bearer token"
 // @Param project body CreateProjectRequest true "Project data"
-// @Success 201 {object} response.Response{data=folderservice.Project}
+// @Success 201 {object} response.Response{data=domain.Project}
 // @Failure 400 {object} response.Response
 // @Failure 401 {object} response.Response
 // @Failure 409 {object} response.Response
@@ -345,7 +368,7 @@ func (c *FolderController) CreateProject(ctx *gin.Context) {
 // @Produce json
 // @Param Authorization header string true "Bearer token"
 // @Param id path string true "Project ID (UUID)"
-// @Success 200 {object} response.Response{data=folderservice.Project}
+// @Success 200 {object} response.Response{data=domain.Project}
 // @Failure 401 {object} response.Response
 // @Failure 404 {object} response.Response
 // @Router /api/projects/{id} [get]
@@ -370,7 +393,7 @@ func (c *FolderController) GetProject(ctx *gin.Context) {
 // @Param Authorization header string true "Bearer token"
 // @Param id path string true "Project ID (UUID)"
 // @Param project body UpdateProjectRequest true "Project update data"
-// @Success 200 {object} response.Response{data=folderservice.Project}
+// @Success 200 {object} response.Response{data=domain.Project}
 // @Failure 400 {object} response.Response
 // @Failure 401 {object} response.Response
 // @Failure 404 {object} response.Response
@@ -434,14 +457,12 @@ func (c *FolderController) DeleteProject(ctx *gin.Context) {
 func (c *FolderController) GetBuildsInProject(ctx *gin.Context) {
 	id := ctx.Param("id")
 
-	// Get build IDs from folder service
 	buildIDs, err := c.folderService.GetBuildsInProject(id)
 	if err != nil {
 		handleFolderError(ctx, err)
 		return
 	}
 
-	// Fetch full build objects - initialize as empty slice, not nil
 	builds := make([]interface{}, 0)
 	for _, buildID := range buildIDs {
 		build, err := c.buildService.GetByID(buildID)
@@ -468,14 +489,12 @@ func (c *FolderController) GetBuildsInProject(ctx *gin.Context) {
 func (c *FolderController) GetModelsInProject(ctx *gin.Context) {
 	id := ctx.Param("id")
 
-	// Get model IDs from folder service
 	modelIDs, err := c.folderService.GetModelsInProject(id)
 	if err != nil {
 		handleFolderError(ctx, err)
 		return
 	}
 
-	// Fetch full model objects - initialize as empty slice, not nil
 	models := make([]interface{}, 0)
 	for _, modelID := range modelIDs {
 		model, err := c.modelService.GetByID(modelID)
@@ -540,14 +559,12 @@ func (c *FolderController) AddBuildToProject(ctx *gin.Context) {
 func (c *FolderController) GetBuildsInFolder(ctx *gin.Context) {
 	id := ctx.Param("id")
 
-	// Get build IDs from folder service
 	buildIDs, err := c.folderService.GetBuildsInFolder(id)
 	if err != nil {
 		handleFolderError(ctx, err)
 		return
 	}
 
-	// Fetch full build objects - initialize as empty slice, not nil
 	builds := make([]interface{}, 0)
 	for _, buildID := range buildIDs {
 		build, err := c.buildService.GetByID(buildID)
@@ -574,14 +591,12 @@ func (c *FolderController) GetBuildsInFolder(ctx *gin.Context) {
 func (c *FolderController) GetModelsInFolder(ctx *gin.Context) {
 	id := ctx.Param("id")
 
-	// Get model IDs from folder service
 	modelIDs, err := c.folderService.GetModelsInFolder(id)
 	if err != nil {
 		handleFolderError(ctx, err)
 		return
 	}
 
-	// Fetch full model objects - initialize as empty slice, not nil
 	models := make([]interface{}, 0)
 	for _, modelID := range modelIDs {
 		model, err := c.modelService.GetByID(modelID)
@@ -632,25 +647,25 @@ func (c *FolderController) AddBuildToFolder(ctx *gin.Context) {
 // handleFolderError handles folder service errors
 func handleFolderError(ctx *gin.Context, err error) {
 	switch err {
-	case folderservice.ErrFolderNotFound:
+	case domain.ErrFolderNotFound:
 		response.NotFound(ctx, err.Error())
-	case folderservice.ErrProjectNotFound:
+	case domain.ErrProjectNotFound:
 		response.NotFound(ctx, err.Error())
-	case folderservice.ErrFolderNameExists:
+	case domain.ErrFolderNameExists:
 		response.Conflict(ctx, err.Error())
-	case folderservice.ErrProjectNameExists:
+	case domain.ErrProjectNameExists:
 		response.Conflict(ctx, err.Error())
-	case folderservice.ErrFolderNameEmpty:
+	case domain.ErrFolderNameEmpty:
 		response.BadRequest(ctx, err.Error())
-	case folderservice.ErrProjectNameEmpty:
+	case domain.ErrProjectNameEmpty:
 		response.BadRequest(ctx, err.Error())
-	case folderservice.ErrFolderHasChildren:
+	case domain.ErrFolderHasChildren:
 		response.BadRequest(ctx, err.Error())
-	case folderservice.ErrFolderHasProjects:
+	case domain.ErrFolderHasProjects:
 		response.BadRequest(ctx, err.Error())
-	case folderservice.ErrProjectHasModels:
+	case domain.ErrProjectHasModels:
 		response.BadRequest(ctx, err.Error())
-	case folderservice.ErrProjectHasBuilds:
+	case domain.ErrProjectHasBuilds:
 		response.BadRequest(ctx, err.Error())
 	default:
 		response.InternalError(ctx, err.Error())

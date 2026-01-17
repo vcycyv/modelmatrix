@@ -1,6 +1,7 @@
 package application
 
 import (
+	"modelmatrix-server/internal/infrastructure/fileservice"
 	"modelmatrix-server/internal/module/datasource/domain"
 	"modelmatrix-server/internal/module/datasource/dto"
 	"modelmatrix-server/internal/module/datasource/repository"
@@ -10,17 +11,23 @@ import (
 // CollectionServiceImpl implements CollectionService
 type CollectionServiceImpl struct {
 	collectionRepo repository.CollectionRepository
+	datasourceRepo repository.DatasourceRepository
 	domainService  *domain.Service
+	fileService    fileservice.FileService
 }
 
 // NewCollectionService creates a new collection service
 func NewCollectionService(
 	collectionRepo repository.CollectionRepository,
+	datasourceRepo repository.DatasourceRepository,
 	domainService *domain.Service,
+	fileService fileservice.FileService,
 ) CollectionService {
 	return &CollectionServiceImpl{
 		collectionRepo: collectionRepo,
+		datasourceRepo: datasourceRepo,
 		domainService:  domainService,
+		fileService:    fileService,
 	}
 }
 
@@ -111,8 +118,8 @@ func (s *CollectionServiceImpl) Update(id string, req *dto.UpdateCollectionReque
 	return toCollectionResponse(collection, int(count)), nil
 }
 
-// Delete deletes a collection
-func (s *CollectionServiceImpl) Delete(id string) error {
+// Delete deletes a collection. If force is true, also deletes all datasources in the collection.
+func (s *CollectionServiceImpl) Delete(id string, force bool) error {
 	// Check if collection exists
 	_, err := s.collectionRepo.GetByID(id)
 	if err != nil {
@@ -125,16 +132,45 @@ func (s *CollectionServiceImpl) Delete(id string) error {
 		return err
 	}
 
-	// Validate deletion using domain service
-	if err := s.domainService.CanDeleteCollection(int(count)); err != nil {
-		return err
+	// If not force delete, validate that collection is empty
+	if !force {
+		if err := s.domainService.CanDeleteCollection(int(count)); err != nil {
+			return err
+		}
+		// Delete the collection (no datasources)
+		if err := s.collectionRepo.Delete(id); err != nil {
+			logger.Error("Failed to delete collection: %v", err)
+			return err
+		}
+	} else {
+		// Force delete: first delete files from MinIO, then delete from database
+		
+		// Get all datasources to delete their files
+		datasources, _, err := s.datasourceRepo.ListByCollection(id, 0, 10000) // Large limit to get all
+		if err != nil {
+			logger.Error("Failed to get datasources for file deletion: %v", err)
+			return err
+		}
+
+		// Delete files from MinIO storage
+		for _, ds := range datasources {
+			if ds.FilePath != "" {
+				if err := s.fileService.Delete(ds.FilePath); err != nil {
+					logger.Warn("Failed to delete datasource file from storage: %s, error: %v", ds.FilePath, err)
+					// Continue - don't fail the deletion for file cleanup errors
+				} else {
+					logger.Info("Deleted datasource file from storage: %s", ds.FilePath)
+				}
+			}
+		}
+
+		// Delete collection and all its datasources from database
+		if err := s.collectionRepo.DeleteWithDatasources(id); err != nil {
+			logger.Error("Failed to force delete collection: %v", err)
+			return err
+		}
 	}
 
-	// Delete the collection
-	if err := s.collectionRepo.Delete(id); err != nil {
-		logger.Error("Failed to delete collection: %v", err)
-		return err
-	}
 	return nil
 }
 

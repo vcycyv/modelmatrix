@@ -12,7 +12,7 @@ import ModelEditDialog from '../components/ModelEditDialog';
 import ScoreModelDialog from '../components/ScoreModelDialog';
 import ConfirmDialog from '../components/ConfirmDialog';
 import DataSourcePanel from '../components/DataSourcePanel';
-import { folderApi, projectApi, buildApi, modelApi, datasourceApi, collectionApi, Folder, Project, ModelBuild, Model, Collection, Datasource } from '../lib/api';
+import { folderApi, projectApi, buildApi, modelApi, datasourceApi, collectionApi, Folder, Project, ModelBuild, Model, Collection, Datasource, FolderContentsCount } from '../lib/api';
 
 type RightPanelTab = 'details' | 'data';
 
@@ -55,6 +55,8 @@ export default function MainPage() {
     isOpen: boolean;
     node: TreeNode | null;
     isLoading: boolean;
+    folderContents?: FolderContentsCount;
+    isLoadingContents?: boolean;
   }>({ isOpen: false, node: null, isLoading: false });
 
   const [buildDialog, setBuildDialog] = useState<{
@@ -112,9 +114,18 @@ export default function MainPage() {
   const handleDeleteDataNode = async () => {
     if (!selectedDataNode) return;
 
-    const confirmMessage = selectedDataNode.type === 'collection'
-      ? `Delete collection "${selectedDataNode.name}"? This will also delete all data sources in it.`
-      : `Delete data source "${selectedDataNode.name}"? This will delete the data from storage.`;
+    let confirmMessage: string;
+    let hasDatasources = false;
+    
+    if (selectedDataNode.type === 'collection') {
+      const collection = selectedDataNode.data as Collection;
+      hasDatasources = collection.datasource_count > 0;
+      confirmMessage = hasDatasources
+        ? `Warning: This collection contains ${collection.datasource_count} data source${collection.datasource_count > 1 ? 's' : ''}. Deleting this collection will remove all data sources in it. Are you sure you want to continue?`
+        : `Delete collection "${selectedDataNode.name}"? This action cannot be undone.`;
+    } else {
+      confirmMessage = `Delete data source "${selectedDataNode.name}"? This will delete the data from storage.`;
+    }
 
     if (!confirm(confirmMessage)) return;
 
@@ -122,7 +133,7 @@ export default function MainPage() {
       if (selectedDataNode.type === 'datasource') {
         await datasourceApi.delete(selectedDataNode.id);
       } else {
-        await collectionApi.delete(selectedDataNode.id);
+        await collectionApi.delete(selectedDataNode.id, hasDatasources);
       }
       setSelectedDataNode(null);
       // Trigger refresh of the DataSourcePanel
@@ -219,7 +230,16 @@ export default function MainPage() {
           label: 'Delete Folder',
           icon: MenuIcons.delete,
           danger: true,
-          onClick: () => setDeleteDialog({ isOpen: true, node, isLoading: false }),
+          onClick: async () => {
+            setDeleteDialog({ isOpen: true, node, isLoading: false, isLoadingContents: true });
+            try {
+              const contents = await folderApi.getContentsCount(node.id);
+              setDeleteDialog(prev => ({ ...prev, folderContents: contents, isLoadingContents: false }));
+            } catch (error) {
+              console.error('Failed to get folder contents:', error);
+              setDeleteDialog(prev => ({ ...prev, isLoadingContents: false }));
+            }
+          },
         },
       ];
     }
@@ -346,7 +366,14 @@ export default function MainPage() {
 
     try {
       if (nodeToDelete.type === 'folder') {
-        await folderApi.delete(nodeToDelete.id);
+        // Use force delete if folder has contents
+        const hasContents = deleteDialog.folderContents && (
+          deleteDialog.folderContents.subfolder_count > 0 ||
+          deleteDialog.folderContents.project_count > 0 ||
+          deleteDialog.folderContents.model_count > 0 ||
+          deleteDialog.folderContents.build_count > 0
+        );
+        await folderApi.delete(nodeToDelete.id, hasContents);
       } else if (nodeToDelete.type === 'project') {
         await projectApi.delete(nodeToDelete.id);
       } else if (nodeToDelete.type === 'build') {
@@ -827,12 +854,50 @@ export default function MainPage() {
       {/* Delete Confirmation Dialog */}
       <ConfirmDialog
         isOpen={deleteDialog.isOpen}
-        onClose={() => setDeleteDialog({ isOpen: false, node: null, isLoading: false })}
+        onClose={() => setDeleteDialog({ isOpen: false, node: null, isLoading: false, folderContents: undefined, isLoadingContents: false })}
         onConfirm={handleDelete}
         title={`Delete ${deleteDialog.node?.type || 'item'}?`}
-        message={`Are you sure you want to delete "${deleteDialog.node?.name}"? This action cannot be undone.`}
+        message={(() => {
+          const baseMessage = `Are you sure you want to delete "${deleteDialog.node?.name}"? This action cannot be undone.`;
+          
+          if (deleteDialog.node?.type !== 'folder') {
+            return baseMessage;
+          }
+          
+          if (deleteDialog.isLoadingContents) {
+            return 'Checking folder contents...';
+          }
+          
+          const contents = deleteDialog.folderContents;
+          if (!contents) {
+            return baseMessage;
+          }
+          
+          const hasContents = contents.subfolder_count > 0 || contents.project_count > 0 || 
+                             contents.model_count > 0 || contents.build_count > 0;
+          
+          if (!hasContents) {
+            return baseMessage;
+          }
+          
+          const parts: string[] = [];
+          if (contents.subfolder_count > 0) {
+            parts.push(`${contents.subfolder_count} subfolder${contents.subfolder_count > 1 ? 's' : ''}`);
+          }
+          if (contents.project_count > 0) {
+            parts.push(`${contents.project_count} project${contents.project_count > 1 ? 's' : ''}`);
+          }
+          if (contents.model_count > 0) {
+            parts.push(`${contents.model_count} model${contents.model_count > 1 ? 's' : ''}`);
+          }
+          if (contents.build_count > 0) {
+            parts.push(`${contents.build_count} build${contents.build_count > 1 ? 's' : ''}`);
+          }
+          
+          return `Warning: This folder contains ${parts.join(', ')}. Deleting this folder will remove all contents. Are you sure you want to continue?`;
+        })()}
         confirmText="Delete"
-        isLoading={deleteDialog.isLoading}
+        isLoading={deleteDialog.isLoading || deleteDialog.isLoadingContents}
       />
 
       {/* Build Model Dialog */}

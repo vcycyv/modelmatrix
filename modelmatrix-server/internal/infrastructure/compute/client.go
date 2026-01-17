@@ -16,6 +16,7 @@ import (
 type Client interface {
 	TrainModel(req *TrainRequest) (*TrainResponse, error)
 	ScoreModel(req *ScoreRequest) (*ScoreResponse, error)
+	EvaluatePerformance(req *EvaluateRequest) (*EvaluateResponse, error)
 	GetStatus(jobID string) (*JobStatusResponse, error)
 	HealthCheck() error
 }
@@ -77,6 +78,37 @@ type ScoreResponse struct {
 	JobID   string `json:"job_id"`
 	Status  string `json:"status"`
 	Message string `json:"message"`
+}
+
+// EvaluateRequest represents a performance evaluation request
+type EvaluateRequest struct {
+	EvaluationID       string   `json:"evaluation_id"`
+	ModelID            string   `json:"model_id"`
+	ModelFilePath      string   `json:"model_file_path"`
+	DatasourceFilePath string   `json:"datasource_file_path"`
+	InputColumns       []string `json:"input_columns"`
+	TargetColumn       string   `json:"target_column"`      // Expected target column name
+	ActualColumn       string   `json:"actual_column"`      // Actual values column in evaluation data
+	PredictionColumn   string   `json:"prediction_column"`  // Optional: if predictions already exist
+	ModelType          string   `json:"model_type"`         // classification, regression
+	CallbackURL        string   `json:"callback_url,omitempty"`
+}
+
+// EvaluateResponse represents the response from an evaluation request
+type EvaluateResponse struct {
+	JobID   string `json:"job_id"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// EvaluateCallbackPayload represents the callback payload for evaluation results
+type EvaluateCallbackPayload struct {
+	EvaluationID string                 `json:"evaluation_id"`
+	ModelID      string                 `json:"model_id"`
+	Status       string                 `json:"status"` // "completed" or "failed"
+	Metrics      map[string]interface{} `json:"metrics,omitempty"`
+	SampleCount  int                    `json:"sample_count,omitempty"`
+	Error        string                 `json:"error,omitempty"`
 }
 
 // HTTPClient implements the Client interface using HTTP
@@ -173,6 +205,45 @@ func (c *HTTPClient) ScoreModel(req *ScoreRequest) (*ScoreResponse, error) {
 
 	logger.Info("Scoring job started: %s", scoreResp.JobID)
 	return &scoreResp, nil
+}
+
+// EvaluatePerformance sends a performance evaluation request to the compute service
+func (c *HTTPClient) EvaluatePerformance(req *EvaluateRequest) (*EvaluateResponse, error) {
+	url := fmt.Sprintf("%s/compute/evaluate", c.baseURL)
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		httpReq.Header.Set("X-API-Key", c.apiKey)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("compute service returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var evalResp EvaluateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&evalResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	logger.Info("Evaluation job started: %s", evalResp.JobID)
+	return &evalResp, nil
 }
 
 // GetStatus retrieves the status of a training job

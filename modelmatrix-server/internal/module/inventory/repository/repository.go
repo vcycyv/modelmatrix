@@ -17,6 +17,10 @@ type ModelRepository interface {
 	List(offset, limit int, search, status string) ([]domain.Model, int64, error)
 	UpdateStatus(id string, status domain.ModelStatus) error
 
+	// Folder/Project queries
+	GetIDsByFolderID(folderID string) ([]string, error)
+	GetIDsByProjectID(projectID string) ([]string, error)
+
 	// Variable operations
 	CreateVariable(variable *domain.ModelVariable) error
 	CreateVariables(variables []domain.ModelVariable) error

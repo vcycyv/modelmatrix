@@ -112,6 +112,13 @@ export const authApi = {
 };
 
 // Folder API
+export interface FolderContentsCount {
+  subfolder_count: number;
+  project_count: number;
+  model_count: number;
+  build_count: number;
+}
+
 export const folderApi = {
   getRootFolders: () => request<Folder[]>('/folders'),
   getFolder: (id: string) => request<Folder>(`/folders/${id}`),
@@ -120,7 +127,9 @@ export const folderApi = {
     request<Folder>('/folders', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: string, data: UpdateFolderRequest) =>
     request<Folder>(`/folders/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  delete: (id: string) => request<void>(`/folders/${id}`, { method: 'DELETE' }),
+  delete: (id: string, force?: boolean) => 
+    request<void>(`/folders/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
+  getContentsCount: (id: string) => request<FolderContentsCount>(`/folders/${id}/contents-count`),
   getBuilds: (id: string) => request<ModelBuild[]>(`/folders/${id}/builds`),
   getModels: (id: string) => request<Model[]>(`/folders/${id}/models`),
   addBuild: (folderId: string, buildId: string) =>
@@ -174,6 +183,17 @@ export interface ScoreResponse {
   output_datasource_id?: string;
 }
 
+// File content response
+export interface FileContentResponse {
+  file_id: string;
+  file_name: string;
+  file_type: string;
+  content_type: string;
+  content: string;
+  size: number;
+  is_text: boolean;
+}
+
 // Model API
 export const modelApi = {
   getModelsInProject: (projectId: string) => request<Model[]>(`/projects/${projectId}/models`),
@@ -187,6 +207,194 @@ export const modelApi = {
   delete: (id: string) => request<void>(`/models/${id}`, { method: 'DELETE' }),
   score: (modelId: string, req: ScoreRequest) =>
     request<ScoreResponse>(`/models/${modelId}/score`, { method: 'POST', body: JSON.stringify(req) }),
+  getFileContent: (modelId: string, fileId: string) =>
+    request<FileContentResponse>(`/models/${modelId}/files/${fileId}/content`),
+};
+
+// Performance Monitoring Types
+export interface PerformanceBaseline {
+  id: string;
+  model_id: string;
+  task_type: string;
+  metric_name: string;
+  metric_value: number;
+  sample_count: number;
+  description?: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PerformanceRecord {
+  id: string;
+  model_id: string;
+  datasource_id: string;
+  metric_name: string;
+  metric_value: number;
+  baseline_value?: number;
+  drift_percentage?: number;
+  sample_count: number;
+  window_start: string;
+  window_end: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface PerformanceAlert {
+  id: string;
+  model_id: string;
+  record_id?: string;
+  alert_type: string;
+  severity: 'info' | 'warning' | 'critical';
+  metric_name: string;
+  baseline_value: number;
+  current_value: number;
+  threshold_percentage: number;
+  drift_percentage: number;
+  message: string;
+  status: 'active' | 'acknowledged' | 'resolved';
+  acknowledged_by?: string;
+  acknowledged_at?: string;
+  resolved_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PerformanceThreshold {
+  id: string;
+  model_id: string;
+  metric_name: string;
+  warning_threshold: number;
+  critical_threshold: number;
+  direction: 'lower' | 'higher';
+  enabled: boolean;
+  consecutive_breaches: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PerformanceEvaluation {
+  id: string;
+  model_id: string;
+  datasource_id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  task_type: string;
+  metrics?: Record<string, unknown>;
+  sample_count: number;
+  error_message?: string;
+  started_at?: string;
+  completed_at?: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PerformanceSummary {
+  model_id: string;
+  task_type: string;
+  has_baseline: boolean;
+  last_evaluation_at?: string;
+  active_alerts: number;
+  warning_alerts: number;
+  critical_alerts: number;
+  latest_metrics: Record<string, number>;
+  baseline_metrics: Record<string, number>;
+  drift_percentages: Record<string, number>;
+  overall_health_status: 'healthy' | 'warning' | 'critical';
+  record_count: number;
+}
+
+export interface MetricDataPoint {
+  timestamp: string;
+  value: number;
+  drift_percentage?: number;
+  sample_count: number;
+}
+
+export interface MetricTimeSeries {
+  metric_name: string;
+  baseline?: number;
+  data_points: MetricDataPoint[];
+}
+
+// Performance API
+export const performanceApi = {
+  // Summary
+  getSummary: (modelId: string) =>
+    request<PerformanceSummary>(`/models/${modelId}/performance`),
+
+  // Baselines
+  getBaselines: (modelId: string) =>
+    request<{ baselines: PerformanceBaseline[] }>(`/models/${modelId}/performance/baselines`),
+  createBaseline: (modelId: string, data: { metrics: Record<string, number>; sample_count?: number; description?: string }) =>
+    request<{ baselines: PerformanceBaseline[] }>(`/models/${modelId}/performance/baselines`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // Performance History
+  getHistory: (modelId: string, params?: { metric_name?: string; limit?: number }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.metric_name) searchParams.set('metric_name', params.metric_name);
+    if (params?.limit) searchParams.set('limit', params.limit.toString());
+    const query = searchParams.toString();
+    return request<{ model_id: string; records: PerformanceRecord[]; total_count: number }>(
+      `/models/${modelId}/performance/history${query ? '?' + query : ''}`
+    );
+  },
+
+  // Record Performance
+  recordPerformance: (modelId: string, data: { datasource_id: string; metrics: Record<string, number>; sample_count?: number }) =>
+    request<{ model_id: string; records: PerformanceRecord[]; total_count: number }>(
+      `/models/${modelId}/performance/record`,
+      { method: 'POST', body: JSON.stringify(data) }
+    ),
+
+  // Metric Time Series
+  getMetricTimeSeries: (modelId: string, metricName: string, limit?: number) =>
+    request<MetricTimeSeries>(
+      `/models/${modelId}/performance/metrics/${metricName}/series${limit ? '?limit=' + limit : ''}`
+    ),
+
+  // Evaluations
+  startEvaluation: (modelId: string, data: { datasource_id: string; actual_column: string; prediction_column?: string }) =>
+    request<PerformanceEvaluation>(`/models/${modelId}/performance/evaluate`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  getEvaluations: (modelId: string, limit?: number) =>
+    request<{ evaluations: PerformanceEvaluation[]; total_count: number }>(
+      `/models/${modelId}/performance/evaluations${limit ? '?limit=' + limit : ''}`
+    ),
+  getEvaluation: (modelId: string, evaluationId: string) =>
+    request<PerformanceEvaluation>(`/models/${modelId}/performance/evaluations/${evaluationId}`),
+
+  // Alerts
+  getAlerts: (modelId: string, status?: string) =>
+    request<{ alerts: PerformanceAlert[]; total_count: number }>(
+      `/models/${modelId}/performance/alerts${status ? '?status=' + status : ''}`
+    ),
+  updateAlert: (modelId: string, alertId: string, data: { status: 'acknowledged' | 'resolved' }) =>
+    request<PerformanceAlert>(`/models/${modelId}/performance/alerts/${alertId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  // Thresholds
+  getThresholds: (modelId: string) =>
+    request<{ thresholds: PerformanceThreshold[] }>(`/models/${modelId}/performance/thresholds`),
+  updateThreshold: (modelId: string, data: {
+    metric_name: string;
+    warning_threshold?: number;
+    critical_threshold?: number;
+    direction?: 'lower' | 'higher';
+    enabled?: boolean;
+    consecutive_breaches?: number;
+  }) =>
+    request<PerformanceThreshold>(`/models/${modelId}/performance/thresholds`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
 };
 
 // Datasource API
@@ -223,7 +431,8 @@ export const collectionApi = {
   get: (id: string) => request<Collection>(`/collections/${id}`),
   create: (data: { name: string; description?: string }) => 
     request<Collection>('/collections', { method: 'POST', body: JSON.stringify(data) }),
-  delete: (id: string) => request<void>(`/collections/${id}`, { method: 'DELETE' }),
+  delete: (id: string, force?: boolean) => 
+    request<void>(`/collections/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
 };
 
 // Types
@@ -371,6 +580,7 @@ export interface Collection {
   created_by: string;
   created_at: string;
   updated_at: string;
+  datasource_count: number;
 }
 
 export interface Datasource {

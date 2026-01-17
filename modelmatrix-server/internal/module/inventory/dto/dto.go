@@ -195,3 +195,14 @@ type ScoreCallbackRequest struct {
 	TableName    string `json:"-" form:"table_name"`
 	CreatedBy    string `json:"-" form:"created_by"`
 }
+
+// FileContentResponse represents the content of a text-based model file
+type FileContentResponse struct {
+	FileID      string `json:"file_id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	FileName    string `json:"file_name" example:"train.py"`
+	FileType    string `json:"file_type" example:"training_code"`
+	ContentType string `json:"content_type" example:"text/x-python"`
+	Content     string `json:"content" example:"import pandas as pd\n..."`
+	Size        int64  `json:"size" example:"1024"`
+	IsText      bool   `json:"is_text" example:"true"`
+}

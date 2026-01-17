@@ -35,6 +35,7 @@ func (c *ModelController) RegisterRoutes(router *gin.RouterGroup, authMiddleware
 		models.POST("/:id/activate", auth.RequireEditor(), c.Activate)
 		models.POST("/:id/deactivate", auth.RequireEditor(), c.Deactivate)
 		models.POST("/:id/score", auth.RequireEditor(), c.Score)
+		models.GET("/:id/files/:fileId/content", auth.RequireViewer(), c.GetFileContent)
 	}
 
 	// Callback endpoint (no auth required, called by compute service)
@@ -305,6 +306,32 @@ func (c *ModelController) ScoreCallback(ctx *gin.Context) {
 	}
 
 	response.Success(ctx, map[string]string{"status": "acknowledged"})
+}
+
+// GetFileContent godoc
+// @Summary Get model file content
+// @Description Retrieves the content of a text-based model file (e.g., training code)
+// @Tags Models
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param id path string true "Model ID (UUID)"
+// @Param fileId path string true "File ID (UUID)"
+// @Success 200 {object} response.Response{data=dto.FileContentResponse}
+// @Failure 401 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Router /api/models/{id}/files/{fileId}/content [get]
+func (c *ModelController) GetFileContent(ctx *gin.Context) {
+	modelID := ctx.Param("id")
+	fileID := ctx.Param("fileId")
+
+	result, err := c.modelService.GetFileContent(modelID, fileID)
+	if err != nil {
+		handleError(ctx, err)
+		return
+	}
+
+	response.Success(ctx, result)
 }
 
 // handleError maps domain errors to HTTP responses

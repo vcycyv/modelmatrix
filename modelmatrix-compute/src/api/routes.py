@@ -8,12 +8,15 @@ from src.api.schemas import (
     TrainResponse,
     ScoreRequest,
     ScoreResponse,
+    EvaluateRequest,
+    EvaluateResponse,
     JobStatusResponse,
     HealthResponse,
     JobStatus,
 )
 from src.services.model_trainer import ModelTrainer
 from src.services.model_scorer import ModelScorer
+from src.services.performance_evaluator import PerformanceEvaluator
 from src.core.logger import logger
 
 # In-memory job storage (in production, use Redis or database)
@@ -163,6 +166,75 @@ async def run_scoring(job_id: str, request: ScoreRequest):
         
     except Exception as e:
         logger.error(f"Scoring job {job_id} failed: {e}", exc_info=True)
+        _jobs[job_id]["status"] = JobStatus.FAILED
+        _jobs[job_id]["error"] = str(e)
+        _jobs[job_id]["progress"] = 0
+
+
+@router.post("/evaluate", response_model=EvaluateResponse, status_code=202)
+async def evaluate_performance(request: EvaluateRequest, background_tasks: BackgroundTasks):
+    """
+    Start a performance evaluation job.
+    
+    Evaluates model performance by comparing predictions with actual values.
+    Use GET /compute/status/{job_id} to check progress.
+    """
+    job_id = str(uuid.uuid4())
+    
+    # Initialize job status
+    _jobs[job_id] = {
+        "job_id": job_id,
+        "status": JobStatus.PENDING,
+        "progress": 0,
+        "metrics": None,
+        "error": None,
+    }
+    
+    # Start evaluation in background
+    background_tasks.add_task(run_evaluation, job_id, request)
+    
+    logger.info(f"Evaluation job {job_id} started for model {request.model_id}")
+    
+    return EvaluateResponse(
+        job_id=job_id,
+        status="evaluating",
+        message="Evaluation job started"
+    )
+
+
+async def run_evaluation(job_id: str, request: EvaluateRequest):
+    """Background task to run performance evaluation."""
+    try:
+        # Update status
+        _jobs[job_id]["status"] = JobStatus.TRAINING  # Reuse TRAINING status
+        _jobs[job_id]["progress"] = 10
+        
+        # Run evaluation
+        evaluator = PerformanceEvaluator()
+        result = await evaluator.evaluate_and_notify(
+            evaluation_id=request.evaluation_id,
+            model_id=request.model_id,
+            model_file_path=request.model_file_path,
+            datasource_file_path=request.datasource_file_path,
+            input_columns=request.input_columns,
+            target_column=request.target_column,
+            actual_column=request.actual_column,
+            prediction_column=request.prediction_column,
+            model_type=request.model_type,
+            callback_url=request.callback_url,
+        )
+        
+        # Update job status
+        _jobs[job_id]["metrics"] = result.get("metrics")
+        _jobs[job_id]["status"] = JobStatus.COMPLETED if result["status"] == "completed" else JobStatus.FAILED
+        _jobs[job_id]["progress"] = 100
+        if result.get("error"):
+            _jobs[job_id]["error"] = result["error"]
+        
+        logger.info(f"Evaluation job {job_id} completed with status {result['status']}")
+        
+    except Exception as e:
+        logger.error(f"Evaluation job {job_id} failed: {e}", exc_info=True)
         _jobs[job_id]["status"] = JobStatus.FAILED
         _jobs[job_id]["error"] = str(e)
         _jobs[job_id]["progress"] = 0

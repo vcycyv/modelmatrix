@@ -1,9 +1,9 @@
 package migrations
 
 import (
-	"modelmatrix-server/internal/infrastructure/folderservice"
 	mbModel "modelmatrix-server/internal/module/build/model"
 	dsModel "modelmatrix-server/internal/module/datasource/model"
+	folderModel "modelmatrix-server/internal/module/folder/model"
 	mmModel "modelmatrix-server/internal/module/inventory/model"
 
 	"gorm.io/gorm"
@@ -11,8 +11,8 @@ import (
 
 // Migrate runs all database migrations
 func Migrate(db *gorm.DB) error {
-	// Get folder service models
-	folderModels := folderservice.GetModels()
+	// Get folder module models
+	folderModels := folderModel.GetModels()
 
 	// Build migration list
 	migrationModels := []interface{}{
@@ -28,6 +28,13 @@ func Migrate(db *gorm.DB) error {
 		&mmModel.ModelModel{},
 		&mmModel.ModelVariableModel{},
 		&mmModel.ModelFileModel{},
+
+		// Performance monitoring models
+		&mmModel.PerformanceBaseline{},
+		&mmModel.PerformanceRecord{},
+		&mmModel.PerformanceAlert{},
+		&mmModel.PerformanceThreshold{},
+		&mmModel.PerformanceEvaluation{},
 	}
 
 	// Add folder service models

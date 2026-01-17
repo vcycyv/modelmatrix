@@ -14,5 +14,9 @@ type BuildRepository interface {
 	List(offset, limit int, search, status string) ([]domain.ModelBuild, int64, error)
 	GetAllNames() ([]string, error)
 	UpdateStatus(id string, status domain.BuildStatus, errorMsg string) error
+
+	// Folder/Project queries
+	GetIDsByFolderID(folderID string) ([]string, error)
+	GetIDsByProjectID(projectID string) ([]string, error)
 }
 

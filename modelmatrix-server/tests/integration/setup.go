@@ -113,7 +113,7 @@ func setupTestServer(t *testing.T) *httptest.Server {
 	columnRepo := dsRepo.NewColumnRepository(database)
 	externalDBConnector := dbconnector.NewExternalDBConnector()
 
-	collectionService := dsApp.NewCollectionService(collectionRepo, dsDomainService)
+	collectionService := dsApp.NewCollectionService(collectionRepo, datasourceRepo, dsDomainService, fileService)
 	datasourceService := dsApp.NewDatasourceService(database, datasourceRepo, collectionRepo, columnRepo, dsDomainService, fileService, externalDBConnector)
 	columnService := dsApp.NewColumnService(database, columnRepo, datasourceRepo, dsDomainService)
 
@@ -411,5 +411,13 @@ func (m *mockComputeClient) ScoreModel(req *compute.ScoreRequest) (*compute.Scor
 		JobID:   "mock-score-job-id",
 		Status:  "accepted",
 		Message: "Scoring job accepted (mock)",
+	}, nil
+}
+
+func (m *mockComputeClient) EvaluatePerformance(req *compute.EvaluateRequest) (*compute.EvaluateResponse, error) {
+	return &compute.EvaluateResponse{
+		JobID:   "mock-evaluate-job-id",
+		Status:  "accepted",
+		Message: "Evaluation job accepted (mock)",
 	}, nil
 }

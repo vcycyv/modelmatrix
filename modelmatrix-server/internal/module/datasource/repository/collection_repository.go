@@ -43,6 +43,31 @@ func (r *CollectionRepositoryImpl) Delete(id string) error {
 	return r.db.Delete(&model.CollectionModel{}, "id = ?", id).Error
 }
 
+// DeleteWithDatasources deletes a collection and all its datasources (including their columns)
+func (r *CollectionRepositoryImpl) DeleteWithDatasources(id string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// First, delete all columns belonging to datasources in this collection
+		if err := tx.Exec(`
+			DELETE FROM datasource_columns 
+			WHERE datasource_id IN (SELECT id FROM datasources WHERE collection_id = ?)
+		`, id).Error; err != nil {
+			return err
+		}
+
+		// Then, delete all datasources in this collection
+		if err := tx.Delete(&model.DatasourceModel{}, "collection_id = ?", id).Error; err != nil {
+			return err
+		}
+
+		// Finally, delete the collection itself
+		if err := tx.Delete(&model.CollectionModel{}, "id = ?", id).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
 // GetByID retrieves a collection by ID
 func (r *CollectionRepositoryImpl) GetByID(id string) (*domain.Collection, error) {
 	var m model.CollectionModel
@@ -135,4 +160,3 @@ func (r *CollectionRepositoryImpl) toDomain(m *model.CollectionModel) *domain.Co
 		UpdatedAt:   m.UpdatedAt,
 	}
 }
-
