@@ -304,6 +304,32 @@ export default function PerformanceMonitorPanel({ modelId, modelType, modelMetri
     }
   };
 
+  /** Actual percentage change from baseline: (current - baseline) / baseline * 100. Negative = drop. */
+  const getDisplayDrift = (baseline: number | undefined, current: number | undefined): number | undefined => {
+    if (baseline == null || current == null || baseline === 0) return undefined;
+    return ((current - baseline) / baseline) * 100;
+  };
+
+  /** Overall health: worst of backend alerts and drift severity (badge matches table). */
+  const effectiveHealthStatus: 'healthy' | 'warning' | 'critical' = (() => {
+    const backend = summary?.overall_health_status ?? 'healthy';
+    if (!summary || baselines.length === 0) return backend;
+    let driftStatus: 'healthy' | 'warning' | 'critical' = 'healthy';
+    for (const b of baselines) {
+      const d = getDisplayDrift(b.metric_value, summary.latest_metrics?.[b.metric_name]);
+      if (d === undefined) continue;
+      const abs = Math.abs(d);
+      if (abs >= 20) {
+        driftStatus = 'critical';
+        break;
+      }
+      if (abs >= 10) driftStatus = 'warning';
+      else if (abs >= 5 && driftStatus === 'healthy') driftStatus = 'warning';
+    }
+    const order = { critical: 3, warning: 2, healthy: 1 };
+    return order[driftStatus] >= order[backend] ? driftStatus : backend;
+  })();
+
   const formatDrift = (drift: number | undefined) => {
     if (drift === undefined || drift === null) return '—';
     const sign = drift >= 0 ? '+' : '';
@@ -359,11 +385,11 @@ export default function PerformanceMonitorPanel({ modelId, modelType, modelMetri
         </div>
         <div className="flex items-center space-x-3">
           {summary && (
-            <div className={`px-4 py-2 rounded-full font-medium ${getHealthStatusColor(summary.overall_health_status)}`}>
-              {summary.overall_health_status === 'healthy' && '✓ '}
-              {summary.overall_health_status === 'warning' && '⚠ '}
-              {summary.overall_health_status === 'critical' && '⚠ '}
-              {summary.overall_health_status.charAt(0).toUpperCase() + summary.overall_health_status.slice(1)}
+            <div className={`px-4 py-2 rounded-full font-medium ${getHealthStatusColor(effectiveHealthStatus)}`}>
+              {effectiveHealthStatus === 'healthy' && '✓ '}
+              {effectiveHealthStatus === 'warning' && '⚠ '}
+              {effectiveHealthStatus === 'critical' && '⚠ '}
+              {effectiveHealthStatus.charAt(0).toUpperCase() + effectiveHealthStatus.slice(1)}
             </div>
           )}
         </div>
@@ -512,7 +538,7 @@ export default function PerformanceMonitorPanel({ modelId, modelType, modelMetri
                         const metricName = baselineItem.metric_name;
                         const baseline = baselineItem.metric_value;
                         const current = summary?.latest_metrics?.[metricName];
-                        const drift = summary?.drift_percentages?.[metricName];
+                        const displayDrift = getDisplayDrift(baseline, current);
 
                         return (
                           <tr
@@ -529,15 +555,15 @@ export default function PerformanceMonitorPanel({ modelId, modelType, modelMetri
                             <td className="px-4 py-3 text-sm text-right font-medium text-slate-800">
                               {current?.toFixed(4) ?? '—'}
                             </td>
-                            <td className={`px-4 py-3 text-sm text-right font-medium ${getDriftColor(drift)}`}>
-                              {formatDrift(drift)}
+                            <td className={`px-4 py-3 text-sm text-right font-medium ${getDriftColor(displayDrift)}`}>
+                              {formatDrift(displayDrift)}
                             </td>
                             <td className="px-4 py-3 text-center">
-                              {drift !== undefined && Math.abs(drift) >= 10 ? (
+                              {displayDrift !== undefined && Math.abs(displayDrift) >= 10 ? (
                                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
                                   Drifted
                                 </span>
-                              ) : drift !== undefined && Math.abs(drift) >= 5 ? (
+                              ) : displayDrift !== undefined && Math.abs(displayDrift) >= 5 ? (
                                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
                                   Warning
                                 </span>
@@ -630,31 +656,68 @@ export default function PerformanceMonitorPanel({ modelId, modelType, modelMetri
                     ))}
                   </select>
                 </div>
-                <div className="p-4">
-                  <div className="h-48 flex items-end justify-between space-x-1">
-                    {timeSeries.data_points.slice(-20).map((point, idx) => {
-                      const maxValue = Math.max(...timeSeries.data_points.map(p => p.value));
-                      const minValue = Math.min(...timeSeries.data_points.map(p => p.value));
-                      const range = maxValue - minValue || 1;
-                      const height = ((point.value - minValue) / range) * 100;
-
-                      return (
-                        <div
-                          key={idx}
-                          className="flex-1 bg-blue-500 rounded-t hover:bg-blue-600 transition-colors"
-                          style={{ height: `${Math.max(height, 5)}%` }}
-                          title={`${new Date(point.timestamp).toLocaleDateString()}: ${point.value.toFixed(4)}`}
-                        />
-                      );
-                    })}
+                <div className="p-4 flex gap-3">
+                  {/* Y-axis labels (value scale) */}
+                  <div className="flex flex-col justify-between text-xs text-slate-500 font-mono py-0.5 shrink-0">
+                    {(() => {
+                      const baselineVal = timeSeries.baseline ?? 0;
+                      const points = timeSeries.data_points.slice(-20);
+                      const yMax = Math.max(1, baselineVal, ...points.map((p) => p.value));
+                      const ticks = yMax <= 1 ? [1, 0.75, 0.5, 0.25, 0] : [yMax, yMax * 0.75, yMax * 0.5, yMax * 0.25, 0];
+                      return ticks.map((t) => <span key={t}>{t.toFixed(2)}</span>);
+                    })()}
                   </div>
-                  {timeSeries.baseline && (
-                    <div className="mt-2 text-sm text-slate-500 flex items-center justify-center">
-                      <div className="w-4 h-0.5 bg-red-400 mr-2" />
-                      Baseline: {timeSeries.baseline.toFixed(4)}
+                  {/* Chart area */}
+                  <div className="flex-1 min-w-0">
+                    <div className="h-48 relative flex items-end justify-start gap-1">
+                      {(() => {
+                        const points = timeSeries.data_points.slice(-20);
+                        const baselineVal = timeSeries.baseline ?? 0;
+                        const yMax = Math.max(1, baselineVal, ...points.map((p) => p.value));
+                        return (
+                          <>
+                            {timeSeries.baseline != null && timeSeries.baseline > 0 && (
+                              <div
+                                className="absolute left-0 right-0 h-0.5 bg-red-400 opacity-80 z-10 pointer-events-none"
+                                style={{ bottom: `${(timeSeries.baseline / yMax) * 100}%` }}
+                                title={`Baseline: ${timeSeries.baseline.toFixed(4)}`}
+                              />
+                            )}
+                            {points.map((point, idx) => {
+                              const height = yMax > 0 ? Math.min(100, (point.value / yMax) * 100) : 0;
+                              return (
+                                <div
+                                  key={idx}
+                                  className="w-6 max-w-[40px] flex-shrink-0 bg-blue-500 rounded-t hover:bg-blue-600 transition-colors"
+                                  style={{ height: `${height}%` }}
+                                  title={`${new Date(point.timestamp).toLocaleDateString()}: ${point.value.toFixed(4)}`}
+                                />
+                              );
+                            })}
+                          </>
+                        );
+                      })()}
                     </div>
-                  )}
+                    {/* X-axis: date labels under first/mid/last */}
+                    {timeSeries.data_points.length > 0 && (
+                      <div className="flex justify-between mt-1 text-xs text-slate-500">
+                        <span>{new Date(timeSeries.data_points[0].timestamp).toLocaleDateString()}</span>
+                        {timeSeries.data_points.length > 1 && (
+                          <span>{new Date(timeSeries.data_points[Math.floor(timeSeries.data_points.length / 2)].timestamp).toLocaleDateString()}</span>
+                        )}
+                        {timeSeries.data_points.length > 1 && (
+                          <span>{new Date(timeSeries.data_points[timeSeries.data_points.length - 1].timestamp).toLocaleDateString()}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
+                {timeSeries.baseline != null && (
+                  <div className="px-4 pb-2 text-sm text-slate-500 flex items-center justify-center">
+                    <div className="w-4 h-0.5 bg-red-400 mr-2" />
+                    Baseline: {timeSeries.baseline.toFixed(4)}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -694,28 +757,32 @@ export default function PerformanceMonitorPanel({ modelId, modelType, modelMetri
                       </td>
                     </tr>
                   ) : (
-                    records.map((record) => (
-                      <tr key={record.id} className="hover:bg-slate-50">
-                        <td className="px-4 py-3 text-sm text-slate-600">
-                          {new Date(record.window_end).toLocaleString()}
-                        </td>
-                        <td className="px-4 py-3 text-sm font-medium text-slate-700">
-                          {record.metric_name.replace(/_/g, ' ').toUpperCase()}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right text-slate-800 font-mono">
-                          {record.metric_value.toFixed(4)}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right text-slate-500 font-mono">
-                          {record.baseline_value?.toFixed(4) ?? '—'}
-                        </td>
-                        <td className={`px-4 py-3 text-sm text-right font-medium ${getDriftColor(record.drift_percentage)}`}>
-                          {formatDrift(record.drift_percentage)}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right text-slate-500">
-                          {record.sample_count.toLocaleString()}
-                        </td>
-                      </tr>
-                    ))
+                    records.map((record) => {
+                      const historyDisplayDrift = getDisplayDrift(record.baseline_value, record.metric_value);
+                      const driftToShow = historyDisplayDrift ?? record.drift_percentage;
+                      return (
+                        <tr key={record.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-3 text-sm text-slate-600">
+                            {new Date(record.window_end).toLocaleString()}
+                          </td>
+                          <td className="px-4 py-3 text-sm font-medium text-slate-700">
+                            {record.metric_name.replace(/_/g, ' ').toUpperCase()}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-right text-slate-800 font-mono">
+                            {record.metric_value.toFixed(4)}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-right text-slate-500 font-mono">
+                            {record.baseline_value?.toFixed(4) ?? '—'}
+                          </td>
+                          <td className={`px-4 py-3 text-sm text-right font-medium ${getDriftColor(driftToShow)}`}>
+                            {formatDrift(driftToShow)}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-right text-slate-500">
+                            {record.sample_count.toLocaleString()}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -761,8 +828,8 @@ export default function PerformanceMonitorPanel({ modelId, modelType, modelMetri
                       <p className="text-sm text-slate-600">
                         <span className="font-medium">{alert.metric_name}</span>:{' '}
                         {alert.baseline_value.toFixed(4)} → {alert.current_value.toFixed(4)}{' '}
-                        <span className={getDriftColor(alert.drift_percentage)}>
-                          ({formatDrift(alert.drift_percentage)})
+                        <span className={getDriftColor(getDisplayDrift(alert.baseline_value, alert.current_value))}>
+                          ({formatDrift(getDisplayDrift(alert.baseline_value, alert.current_value))})
                         </span>
                       </p>
                       <p className="text-xs text-slate-500 mt-1">

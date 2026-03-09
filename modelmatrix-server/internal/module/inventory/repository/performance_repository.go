@@ -126,7 +126,13 @@ func (r *PerformanceRepositoryImpl) CreateRecords(records []domain.PerformanceRe
 	for i, rec := range records {
 		dbModels[i] = *r.recordToModel(&rec)
 	}
-	return r.db.Create(&dbModels).Error
+	if err := r.db.Create(&dbModels).Error; err != nil {
+		return err
+	}
+	for i := range dbModels {
+		records[i].ID = dbModels[i].ID
+	}
+	return nil
 }
 
 func (r *PerformanceRepositoryImpl) GetRecordsByModelID(modelID string, limit int, startTime, endTime *time.Time) ([]domain.PerformanceRecord, error) {

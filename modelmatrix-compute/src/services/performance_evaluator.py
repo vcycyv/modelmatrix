@@ -133,33 +133,38 @@ class PerformanceEvaluator:
         model_type: str,
     ) -> np.ndarray:
         """Generate predictions using the model."""
-        import pickle
-
-        # Load model
         model_data = self.data_loader.load_model(model_file_path)
         if model_data is None:
             raise ValueError(f"Failed to load model from {model_file_path}")
 
-        model = model_data.get("model")
+        # Support both dict format {"model": ..., "preprocessor": ...} and raw model
+        if isinstance(model_data, dict) and "model" in model_data:
+            model = model_data["model"]
+            preprocessor = model_data.get("preprocessor")
+        else:
+            model = model_data
+            preprocessor = None
+
         if model is None:
             raise ValueError("Model not found in model file")
 
-        # Prepare input data
-        available_columns = [col for col in input_columns if col in data.columns]
-        if len(available_columns) != len(input_columns):
-            missing = set(input_columns) - set(available_columns)
-            logger.warning(f"Missing input columns: {missing}")
-
-        X = data[available_columns].copy()
-
-        # Handle any preprocessing if needed
-        preprocessor = model_data.get("preprocessor")
+        # Prepare input data with same encoding as training (one-hot for categoricals)
         if preprocessor:
+            X = data[input_columns].copy()
             X = preprocessor.transform(X)
+        else:
+            # Match training pipeline: use DataLoader's prepare_features_unsupervised
+            # so categoricals are one-hot encoded the same way as at fit time
+            X = self.data_loader.prepare_features_unsupervised(data, input_columns)
+            # Align columns to model's expected feature names (add missing as 0, reorder)
+            expected = getattr(model, "feature_names_in_", None)
+            if expected is not None:
+                for col in expected:
+                    if col not in X.columns:
+                        X[col] = 0
+                X = X[expected]
 
-        # Generate predictions
         predictions = model.predict(X)
-
         return predictions
 
     def _calculate_classification_metrics(

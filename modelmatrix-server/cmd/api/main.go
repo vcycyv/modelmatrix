@@ -194,7 +194,7 @@ func main() {
 
 	// Configure compute for performance service
 	performanceService.ConfigureCompute(computeClient, dsGetter, cfg)
-	buildService := buildApp.NewBuildService(buildRepo, buildDomainService, computeClient, datasourceService, modelService, folderSvc, cfg)
+	buildService := buildApp.NewBuildService(buildRepo, buildDomainService, computeClient, datasourceService, modelService, folderSvc, performanceService, cfg)
 	buildController := buildApi.NewBuildController(buildService)
 
 	// Wire up cascade delete dependencies (after services are created)

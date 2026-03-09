@@ -139,7 +139,7 @@ func setupTestServer(t *testing.T) *httptest.Server {
 	buildDomainService := buildDomain.NewService()
 	buildRepo := buildRepo.NewBuildRepository(database)
 	computeClient := &mockComputeClient{} // Mock client for integration tests
-	buildService := buildApp.NewBuildService(buildRepo, buildDomainService, computeClient, datasourceService, modelService, nil, cfg)
+	buildService := buildApp.NewBuildService(buildRepo, buildDomainService, computeClient, datasourceService, modelService, nil, nil, cfg)
 	buildController := buildApi.NewBuildController(buildService)
 
 	// Register model build routes

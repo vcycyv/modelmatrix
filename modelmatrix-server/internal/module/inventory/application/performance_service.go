@@ -162,10 +162,26 @@ func (s *PerformanceServiceImpl) RecordPerformance(modelID string, req *dto.Reco
 		baselineMap[baselines[i].MetricName] = &baselines[i]
 	}
 
-	// Get thresholds
+	// Get thresholds (ensure defaults exist if model has baselines but no thresholds)
 	thresholds, err := s.performanceRepo.GetThresholdsByModelID(modelID)
 	if err != nil {
 		logger.Warn("Failed to get thresholds: %v", err)
+	}
+	if len(thresholds) == 0 && len(baselines) > 0 {
+		model, modelErr := s.modelRepo.GetByID(modelID)
+		if modelErr == nil {
+			taskType := domain.TaskType(model.ModelType)
+			if taskType.IsValid() {
+				if initErr := s.InitializeDefaultThresholds(modelID, taskType); initErr != nil {
+					logger.Warn("Failed to initialize default thresholds when recording: %v", initErr)
+				} else {
+					thresholds, err = s.performanceRepo.GetThresholdsByModelID(modelID)
+					if err != nil {
+						logger.Warn("Failed to get thresholds after init: %v", err)
+					}
+				}
+			}
+		}
 	}
 	thresholdMap := make(map[string]*domain.PerformanceThreshold)
 	for i := range thresholds {
@@ -215,9 +231,13 @@ func (s *PerformanceServiceImpl) RecordPerformance(modelID string, req *dto.Reco
 	}
 
 	// Check thresholds and create alerts
-	for _, record := range records {
-		if threshold, ok := thresholdMap[record.MetricName]; ok {
-			s.checkAndCreateAlert(modelID, &record, threshold)
+	logger.Info("RecordPerformance: model=%s baselines=%d thresholds=%d records=%d (with drift: %d)",
+		modelID, len(baselineMap), len(thresholdMap), len(records), countRecordsWithDrift(records))
+	for i := range records {
+		if threshold, ok := thresholdMap[records[i].MetricName]; ok {
+			s.checkAndCreateAlert(modelID, &records[i], threshold)
+		} else {
+			logger.Debug("RecordPerformance: no threshold for metric %s, skipping alert check", records[i].MetricName)
 		}
 	}
 
@@ -226,21 +246,38 @@ func (s *PerformanceServiceImpl) RecordPerformance(modelID string, req *dto.Reco
 	return s.GetPerformanceHistory(modelID, &dto.GetPerformanceHistoryParams{Limit: 50})
 }
 
+func countRecordsWithDrift(records []domain.PerformanceRecord) int {
+	n := 0
+	for i := range records {
+		if records[i].DriftPercentage != nil {
+			n++
+		}
+	}
+	return n
+}
+
 // checkAndCreateAlert checks threshold and creates alert if breached
 func (s *PerformanceServiceImpl) checkAndCreateAlert(modelID string, record *domain.PerformanceRecord, threshold *domain.PerformanceThreshold) {
 	if record.DriftPercentage == nil || record.BaselineValue == nil {
+		logger.Debug("checkAndCreateAlert: skip metric %s (no drift or baseline)", record.MetricName)
 		return
 	}
 
 	breached, severity := threshold.CheckBreach(*record.DriftPercentage)
 	if !breached {
+		logger.Info("No alert: metric %s drift %.2f%% below threshold (warning=%.1f%%, critical=%.1f%%)",
+			record.MetricName, *record.DriftPercentage, threshold.WarningThreshold, threshold.CriticalThreshold)
 		return
 	}
 
-	// Create alert
+	// Create alert (RecordID links to the performance record; use nil if ID not set to avoid invalid UUID)
+	var recordID *string
+	if record.ID != "" {
+		recordID = &record.ID
+	}
 	alert := &domain.PerformanceAlert{
 		ModelID:             modelID,
-		RecordID:            &record.ID,
+		RecordID:            recordID,
 		AlertType:           domain.AlertTypePerformanceDrift,
 		Severity:            severity,
 		MetricName:          record.MetricName,
@@ -454,15 +491,22 @@ func (s *PerformanceServiceImpl) HandleEvaluationCallback(req *dto.EvaluationCal
 			return err
 		}
 
-		// Convert metrics and record performance
+		// Convert metrics and record performance (JSON numbers can be float64 or int)
 		metrics := make(map[string]float64)
 		for k, v := range req.Metrics {
-			if f, ok := v.(float64); ok {
-				metrics[k] = f
+			switch val := v.(type) {
+			case float64:
+				metrics[k] = val
+			case int:
+				metrics[k] = float64(val)
+			case int64:
+				metrics[k] = float64(val)
 			}
 		}
 
-		if len(metrics) > 0 {
+		if len(metrics) == 0 {
+			logger.Warn("Evaluation callback: no numeric metrics (raw keys=%d), cannot record performance for model %s", len(req.Metrics), evaluation.ModelID)
+		} else {
 			recordReq := &dto.RecordPerformanceRequest{
 				DatasourceID: evaluation.DatasourceID,
 				Metrics:      metrics,
@@ -474,7 +518,7 @@ func (s *PerformanceServiceImpl) HandleEvaluationCallback(req *dto.EvaluationCal
 			}
 		}
 
-		logger.Info("Performance evaluation completed for model %s: %d metrics", evaluation.ModelID, len(metrics))
+		logger.Info("Performance evaluation completed for model %s: %d metrics recorded", evaluation.ModelID, len(metrics))
 	}
 
 	return nil

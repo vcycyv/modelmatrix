@@ -1,9 +1,10 @@
 """Service for loading data from MinIO."""
 import io
+import pickle
 import pandas as pd
 from minio import Minio
 from minio.error import S3Error
-from typing import Tuple
+from typing import Any, Tuple
 
 from src.core.config import settings
 from src.core.logger import logger
@@ -21,7 +22,55 @@ class DataLoader:
             secure=settings.minio_use_ssl
         )
         self.bucket = settings.minio_bucket
-    
+
+    def load_data(self, file_path: str) -> pd.DataFrame:
+        """
+        Load a data file from MinIO by extension (.csv or .parquet).
+
+        Args:
+            file_path: Path in format "minio://bucket/path" or "path/to/file.csv" (or .parquet)
+
+        Returns:
+            pandas DataFrame
+        """
+        path = file_path.strip().lower()
+        if path.endswith(".parquet"):
+            return self.load_parquet(file_path)
+        if path.endswith(".csv"):
+            return self.load_csv(file_path)
+        raise ValueError(f"Unsupported file format for {file_path}. Use .parquet or .csv")
+
+    def load_model(self, model_file_path: str) -> Any:
+        """
+        Load a trained model (pickle) from MinIO.
+
+        Args:
+            model_file_path: Path in format "minio://bucket/path" or "path/to/file.pkl"
+
+        Returns:
+            Unpickled model object (may be raw model or dict with "model" / "preprocessor" keys)
+        """
+        if model_file_path.startswith("minio://"):
+            path = model_file_path.replace(f"minio://{self.bucket}/", "").lstrip("/")
+        else:
+            path = model_file_path.lstrip("/")
+
+        try:
+            logger.info(f"Loading model from MinIO: {path}")
+            response = self.client.get_object(self.bucket, path)
+            model_bytes = response.read()
+            response.close()
+            response.release_conn()
+            obj = pickle.loads(model_bytes)
+            logger.info("Model loaded successfully")
+            return obj
+        except S3Error as e:
+            logger.error(f"Failed to load model from MinIO: {e}")
+            raise ValueError(f"Failed to load model from MinIO: {e}") from e
+        except Exception as e:
+            logger.error(f"Error loading model: {e}")
+            raise
+
     def load_parquet(self, file_path: str) -> pd.DataFrame:
         """
         Load a Parquet file from MinIO.

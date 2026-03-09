@@ -35,13 +35,14 @@ type BuildService interface {
 
 // BuildServiceImpl implements BuildService
 type BuildServiceImpl struct {
-	buildRepo         repository.BuildRepository
-	domainService     *domain.Service
-	computeClient     compute.Client
-	datasourceService dsApp.DatasourceService
-	modelService      invApp.ModelService
-	folderService     folderApp.FolderService
-	config            *config.Config
+	buildRepo           repository.BuildRepository
+	domainService       *domain.Service
+	computeClient       compute.Client
+	datasourceService   dsApp.DatasourceService
+	modelService        invApp.ModelService
+	folderService       folderApp.FolderService
+	performanceService invApp.PerformanceService // optional: for auto-baseline on model creation
+	config              *config.Config
 }
 
 // NewBuildService creates a new build service
@@ -52,16 +53,18 @@ func NewBuildService(
 	datasourceService dsApp.DatasourceService,
 	modelService invApp.ModelService,
 	folderSvc folderApp.FolderService,
+	performanceService invApp.PerformanceService,
 	cfg *config.Config,
 ) BuildService {
 	return &BuildServiceImpl{
-		buildRepo:         buildRepo,
-		domainService:     domainService,
-		computeClient:     computeClient,
-		datasourceService: datasourceService,
-		modelService:      modelService,
-		folderService:     folderSvc,
-		config:            cfg,
+		buildRepo:           buildRepo,
+		domainService:       domainService,
+		computeClient:       computeClient,
+		datasourceService:   datasourceService,
+		modelService:        modelService,
+		folderService:       folderSvc,
+		performanceService:  performanceService,
+		config:              cfg,
 	}
 }
 
@@ -527,12 +530,44 @@ func (s *BuildServiceImpl) createModelFromBuild(build *domain.ModelBuild, callba
 		CreatedBy:          build.CreatedBy,
 	}
 
-	_, err = s.modelService.CreateFromBuild(createReq)
+	modelResp, err := s.modelService.CreateFromBuild(createReq)
 	if err != nil {
 		return fmt.Errorf("failed to create model: %w", err)
 	}
 
 	logger.Info("Created model from build %s", build.ID)
+
+	// Auto-create performance baseline from training metrics so first evaluation can produce drift/alerts
+	if s.performanceService == nil {
+		logger.Warn("Build callback: performanceService is nil, skipping auto-baseline for model %s", modelResp.ID)
+	} else if len(callback.Metrics) == 0 {
+		logger.Warn("Build callback: no metrics in callback, skipping auto-baseline for model %s", modelResp.ID)
+	} else {
+		metricsFloat := make(map[string]float64)
+		for k, v := range callback.Metrics {
+			switch val := v.(type) {
+			case float64:
+				metricsFloat[k] = val
+			case int:
+				metricsFloat[k] = float64(val)
+			case int64:
+				metricsFloat[k] = float64(val)
+			}
+		}
+		if len(metricsFloat) == 0 {
+			logger.Warn("Build callback: no numeric metrics after conversion (got %d keys), skipping auto-baseline for model %s", len(callback.Metrics), modelResp.ID)
+		} else {
+			_, baselineErr := s.performanceService.CreateBaseline(modelResp.ID, &invDto.CreateBaselineRequest{
+				Metrics:     metricsFloat,
+				Description: "Baseline from model training",
+			}, "system")
+			if baselineErr != nil {
+				logger.Warn("Failed to create initial performance baseline for model %s: %v", modelResp.ID, baselineErr)
+			} else {
+				logger.Info("Created initial performance baseline for model %s (%d metrics)", modelResp.ID, len(metricsFloat))
+			}
+		}
+	}
 
 	return nil
 }
