@@ -122,7 +122,14 @@ type BuildCallbackRequest struct {
 	CodePath           *string                `json:"code_path,omitempty"`           // Path to training code in MinIO
 	Metrics            map[string]interface{} `json:"metrics,omitempty"`
 	FeatureNames       []string               `json:"feature_names,omitempty"`       // Actual input features used by the model
-	FeatureCount       *int                   `json:"feature_count,omitempty"`       // Number of features
+	FeatureCount       *int                   `json:"feature_count,omitempty"`     // Number of features
 	FeatureImportances map[string]float64     `json:"feature_importances,omitempty"` // Feature name -> importance score (0 = unused)
 	Error              *string                `json:"error,omitempty"`
+}
+
+// RetrainRequest represents request to retrain an existing model
+type RetrainRequest struct {
+	DatasourceID *string                    `json:"datasource_id,omitempty" binding:"omitempty,uuid" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Name         *string                    `json:"name,omitempty" binding:"omitempty,min=1,max=255" example:"Retrain 2024-03"`
+	Parameters   *TrainingParametersRequest `json:"parameters,omitempty"`
 }

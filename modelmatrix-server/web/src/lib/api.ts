@@ -209,6 +209,64 @@ export const modelApi = {
     request<ScoreResponse>(`/models/${modelId}/score`, { method: 'POST', body: JSON.stringify(req) }),
   getFileContent: (modelId: string, fileId: string) =>
     request<FileContentResponse>(`/models/${modelId}/files/${fileId}/content`),
+  retrain: (modelId: string, body?: RetrainRequest) =>
+    request<ModelBuild>(`/models/${modelId}/retrain`, {
+      method: 'POST',
+      body: body && Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
+    }),
+};
+
+// Model version types and API
+export interface ModelVersion {
+  id: string;
+  model_id: string;
+  version_number: number;
+  name: string;
+  description: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface ModelVersionDetail extends ModelVersion {
+  build_id: string;
+  datasource_id: string;
+  project_id?: string;
+  folder_id?: string;
+  algorithm: string;
+  model_type: string;
+  target_column: string;
+  status: string;
+  metrics?: Record<string, number>;
+  variables: ModelVariable[];
+  files: ModelFile[];
+}
+
+export interface RetrainRequest {
+  datasource_id?: string;
+  name?: string;
+  parameters?: {
+    train_test_split?: number;
+    hyperparameters?: Record<string, unknown>;
+    random_seed?: number;
+  };
+}
+
+export const versionApi = {
+  list: (modelId: string, params?: { page?: number; page_size?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.page != null) search.set('page', String(params.page));
+    if (params?.page_size != null) search.set('page_size', String(params.page_size));
+    const q = search.toString();
+    return request<{ versions: ModelVersion[]; total: number }>(
+      `/models/${modelId}/versions${q ? '?' + q : ''}`
+    );
+  },
+  get: (modelId: string, versionId: string) =>
+    request<ModelVersionDetail>(`/models/${modelId}/versions/${versionId}`),
+  create: (modelId: string) =>
+    request<ModelVersion>(`/models/${modelId}/versions`, { method: 'POST' }),
+  restore: (modelId: string, versionId: string) =>
+    request<Model>(`/models/${modelId}/versions/${versionId}/restore`, { method: 'POST' }),
 };
 
 // Performance Monitoring Types

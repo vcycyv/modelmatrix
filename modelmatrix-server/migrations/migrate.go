@@ -29,6 +29,11 @@ func Migrate(db *gorm.DB) error {
 		&mmModel.ModelVariableModel{},
 		&mmModel.ModelFileModel{},
 
+		// Model version snapshots
+		&mmModel.ModelVersionModel{},
+		&mmModel.ModelVersionVariableModel{},
+		&mmModel.ModelVersionFileModel{},
+
 		// Performance monitoring models
 		&mmModel.PerformanceBaseline{},
 		&mmModel.PerformanceRecord{},
@@ -74,6 +79,14 @@ func CreateIndexes(db *gorm.DB) error {
 	if err := db.Exec(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_file_type_unique_per_model 
 		ON model_files (model_id, file_type)
+	`).Error; err != nil {
+		return err
+	}
+
+	// Index for listing versions by model
+	if err := db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_model_versions_model_id_created 
+		ON model_versions (model_id, created_at DESC)
 	`).Error; err != nil {
 		return err
 	}
@@ -124,6 +137,9 @@ func CreateIndexes(db *gorm.DB) error {
 // DropAll drops all tables (use with caution!)
 func DropAll(db *gorm.DB) error {
 	return db.Migrator().DropTable(
+		&mmModel.ModelVersionFileModel{},
+		&mmModel.ModelVersionVariableModel{},
+		&mmModel.ModelVersionModel{},
 		&mmModel.ModelFileModel{},
 		&mmModel.ModelVariableModel{},
 		&mmModel.ModelModel{},

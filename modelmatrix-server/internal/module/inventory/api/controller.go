@@ -7,18 +7,30 @@ import (
 	"modelmatrix-server/internal/module/inventory/dto"
 	"modelmatrix-server/pkg/response"
 
+	buildApp "modelmatrix-server/internal/module/build/application"
+	buildDto "modelmatrix-server/internal/module/build/dto"
+
 	"github.com/gin-gonic/gin"
 )
 
 // ModelController handles model management-related HTTP requests
 type ModelController struct {
 	modelService application.ModelService
+	buildService buildApp.BuildService
 }
 
 // NewModelController creates a new model controller
 func NewModelController(modelService application.ModelService) *ModelController {
 	return &ModelController{
 		modelService: modelService,
+	}
+}
+
+// NewModelControllerWithRetrain creates a model controller with retrain (build) support
+func NewModelControllerWithRetrain(modelService application.ModelService, buildService buildApp.BuildService) *ModelController {
+	return &ModelController{
+		modelService: modelService,
+		buildService: buildService,
 	}
 }
 
@@ -36,6 +48,9 @@ func (c *ModelController) RegisterRoutes(router *gin.RouterGroup, authMiddleware
 		models.POST("/:id/deactivate", auth.RequireEditor(), c.Deactivate)
 		models.POST("/:id/score", auth.RequireEditor(), c.Score)
 		models.GET("/:id/files/:fileId/content", auth.RequireViewer(), c.GetFileContent)
+		if c.buildService != nil {
+			models.POST("/:id/retrain", auth.RequireEditor(), c.Retrain)
+		}
 	}
 
 	// Callback endpoint (no auth required, called by compute service)
@@ -332,6 +347,33 @@ func (c *ModelController) GetFileContent(ctx *gin.Context) {
 	}
 
 	response.Success(ctx, result)
+}
+
+// Retrain godoc
+// @Summary Retrain a model
+// @Description Creates a new build from the model config and starts training (no performance task required). Optional: datasource_id, name, parameters.
+// @Tags Models
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param id path string true "Model ID (UUID)"
+// @Param body body buildDto.RetrainRequest false "Optional: datasource_id, name, parameters"
+// @Success 202 {object} response.Response{data=buildDto.BuildResponse}
+// @Failure 400 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Router /api/models/{id}/retrain [post]
+func (c *ModelController) Retrain(ctx *gin.Context) {
+	modelID := ctx.Param("id")
+	var req buildDto.RetrainRequest
+	_ = ctx.ShouldBindJSON(&req)
+	username := auth.GetUsername(ctx)
+
+	result, err := c.buildService.Retrain(modelID, &req, username)
+	if err != nil {
+		handleError(ctx, err)
+		return
+	}
+	response.Accepted(ctx, result)
 }
 
 // handleError maps domain errors to HTTP responses

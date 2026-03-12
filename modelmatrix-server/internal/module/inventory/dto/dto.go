@@ -206,3 +206,42 @@ type FileContentResponse struct {
 	Size        int64  `json:"size" example:"1024"`
 	IsText      bool   `json:"is_text" example:"true"`
 }
+
+// VersionResponse represents a model version in list responses
+type VersionResponse struct {
+	ID            string    `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	ModelID       string    `json:"model_id" example:"550e8400-e29b-41d4-a716-446655440001"`
+	VersionNumber int       `json:"version_number" example:"2"`
+	Name          string    `json:"name" example:"Sales Predictor"`
+	Description   string    `json:"description" example:"Snapshot before retrain"`
+	CreatedBy     string    `json:"created_by" example:"admin"`
+	CreatedAt     time.Time `json:"created_at" example:"2024-01-15T10:30:00Z"`
+}
+
+// VersionDetailResponse includes full snapshot (metadata + variables + files)
+type VersionDetailResponse struct {
+	VersionResponse
+	BuildID      string              `json:"build_id"`
+	DatasourceID string              `json:"datasource_id"`
+	ProjectID    *string             `json:"project_id,omitempty"`
+	FolderID     *string             `json:"folder_id,omitempty"`
+	Algorithm    string              `json:"algorithm"`
+	ModelType    string              `json:"model_type"`
+	TargetColumn string              `json:"target_column"`
+	Status       string              `json:"status"`
+	Metrics      *MetricsResponse     `json:"metrics,omitempty"`
+	Variables    []VariableResponse  `json:"variables"`
+	Files        []FileResponse       `json:"files"`
+}
+
+// VersionListResponse represents a list of versions
+type VersionListResponse struct {
+	Versions []VersionResponse `json:"versions"`
+	Total    int64             `json:"total"`
+}
+
+// ListVersionsParams represents query params for listing versions
+type ListVersionsParams struct {
+	Page     int `form:"page" binding:"omitempty,min=1" example:"1"`
+	PageSize int `form:"page_size" binding:"omitempty,min=1,max=100" example:"20"`
+}

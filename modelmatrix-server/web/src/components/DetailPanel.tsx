@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { TreeNode } from './TreeView';
-import { Folder, Project, ModelBuild, Model, ModelVariable, ModelFile, Collection, Datasource, Column, datasourceApi, modelApi, buildApi, FileContentResponse } from '../lib/api';
+import { Folder, Project, ModelBuild, Model, ModelVariable, ModelFile, Collection, Datasource, Column, datasourceApi, modelApi, buildApi, versionApi, FileContentResponse, ModelVersion } from '../lib/api';
 import PerformanceMonitorPanel from './PerformanceMonitorPanel';
 
 // Extended node type that can include data items
@@ -21,11 +21,13 @@ interface DetailPanelProps {
   onCancelBuild?: () => void;
   onDeleteDataNode?: () => void;
   onScoreModel?: () => void;
+  onRetrain?: () => void;
+  onRefreshModel?: () => void;
   onNavigateToDatasource?: (datasource: Datasource) => void;
   onNavigateToBuild?: (build: ModelBuild) => void;
 }
 
-export default function DetailPanel({ node, dataNode, onEdit, onDelete, onBuildModel, onStartBuild, onCancelBuild, onDeleteDataNode, onScoreModel, onNavigateToDatasource, onNavigateToBuild }: DetailPanelProps) {
+export default function DetailPanel({ node, dataNode, onEdit, onDelete, onBuildModel, onStartBuild, onCancelBuild, onDeleteDataNode, onScoreModel, onRetrain, onRefreshModel, onNavigateToDatasource, onNavigateToBuild }: DetailPanelProps) {
   // Determine which node to display (dataNode takes priority if present)
   const displayNode = dataNode || node;
   
@@ -130,6 +132,17 @@ export default function DetailPanel({ node, dataNode, onEdit, onDelete, onBuildM
               <span>Cancel Build</span>
             </button>
           )}
+          {node.type === 'model' && onRetrain && (
+            <button
+              onClick={onRetrain}
+              className="px-3 py-1.5 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-md transition-colors flex items-center space-x-1"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span>Retrain</span>
+            </button>
+          )}
           {node.type === 'model' && onScoreModel && (
             <button
               onClick={onScoreModel}
@@ -161,7 +174,7 @@ export default function DetailPanel({ node, dataNode, onEdit, onDelete, onBuildM
         {node.type === 'folder' && <FolderDetails folder={node.data as Folder} />}
         {node.type === 'project' && <ProjectDetails project={node.data as Project} />}
         {node.type === 'build' && <BuildDetails build={node.data as ModelBuild} />}
-        {node.type === 'model' && <ModelDetails model={node.data as Model} onNavigateToDatasource={onNavigateToDatasource} onNavigateToBuild={onNavigateToBuild} />}
+        {node.type === 'model' && <ModelDetails model={node.data as Model} onNavigateToDatasource={onNavigateToDatasource} onNavigateToBuild={onNavigateToBuild} onRefreshModel={onRefreshModel} />}
       </div>
     </div>
   );
@@ -311,9 +324,9 @@ function BuildDetails({ build }: { build: ModelBuild }) {
   );
 }
 
-type ModelDetailTab = 'details' | 'variables' | 'files' | 'performance';
+type ModelDetailTab = 'details' | 'variables' | 'files' | 'versions' | 'performance';
 
-function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild }: { model: Model; onNavigateToDatasource?: (datasource: Datasource) => void; onNavigateToBuild?: (build: ModelBuild) => void }) {
+function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild, onRefreshModel }: { model: Model; onNavigateToDatasource?: (datasource: Datasource) => void; onNavigateToBuild?: (build: ModelBuild) => void; onRefreshModel?: () => void }) {
   const [activeTab, setActiveTab] = useState<ModelDetailTab>('details');
   const [variables, setVariables] = useState<ModelVariable[]>([]);
   const [files, setFiles] = useState<ModelFile[]>([]);
@@ -328,6 +341,13 @@ function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild }: { mo
   const [fileContent, setFileContent] = useState<FileContentResponse | null>(null);
   const [isLoadingContent, setIsLoadingContent] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
+
+  // Versions tab state
+  const [versions, setVersions] = useState<ModelVersion[]>([]);
+  const [versionsTotal, setVersionsTotal] = useState(0);
+  const [versionsPage, setVersionsPage] = useState(1);
+  const [isLoadingVersions, setIsLoadingVersions] = useState(false);
+  const [versionActionLoading, setVersionActionLoading] = useState<string | null>(null);
 
   // Load files when model changes
   useEffect(() => {
@@ -409,6 +429,26 @@ function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild }: { mo
     loadVariables();
   }, [model.id, activeTab, variables.length]);
 
+  // Load versions when switching to versions tab
+  useEffect(() => {
+    if (activeTab !== 'versions') return;
+    const loadVersions = async () => {
+      setIsLoadingVersions(true);
+      try {
+        const res = await versionApi.list(model.id, { page: versionsPage, page_size: 10 });
+        setVersions(res.versions || []);
+        setVersionsTotal(res.total ?? 0);
+      } catch (err) {
+        console.error('Failed to load versions:', err);
+        setVersions([]);
+        setVersionsTotal(0);
+      } finally {
+        setIsLoadingVersions(false);
+      }
+    };
+    loadVersions();
+  }, [model.id, activeTab, versionsPage]);
+
   // Reset when model changes
   useEffect(() => {
     setVariables([]);
@@ -417,6 +457,9 @@ function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild }: { mo
     setViewingFile(null);
     setFileContent(null);
     setContentError(null);
+    setVersions([]);
+    setVersionsTotal(0);
+    setVersionsPage(1);
   }, [model.id]);
 
   // Function to check if a file is viewable (text-based)
@@ -503,6 +546,15 @@ function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild }: { mo
       icon: (
         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+      ),
+    },
+    {
+      id: 'versions',
+      label: 'Versions',
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
       ),
     },
@@ -762,6 +814,142 @@ function ModelDetails({ model, onNavigateToDatasource, onNavigateToBuild }: { mo
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
                 <p className="text-sm text-slate-500">No files available</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Versions Tab */}
+        {activeTab === 'versions' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-slate-600">Snapshot history (newest first). Create a version to save current state; restore to roll back.</span>
+              <button
+                type="button"
+                onClick={async () => {
+                  setVersionActionLoading('create');
+                  try {
+                    await versionApi.create(model.id);
+                    const res = await versionApi.list(model.id, { page: 1, page_size: 10 });
+                    setVersions(res.versions || []);
+                    setVersionsTotal(res.total ?? 0);
+                    setVersionsPage(1);
+                    onRefreshModel?.();
+                  } catch (err) {
+                    console.error('Failed to create version:', err);
+                    alert(err instanceof Error ? err.message : 'Failed to create version');
+                  } finally {
+                    setVersionActionLoading(null);
+                  }
+                }}
+                disabled={!!versionActionLoading}
+                className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50 flex items-center space-x-1"
+              >
+                {versionActionLoading === 'create' ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span>Creating...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    </svg>
+                    <span>Create version</span>
+                  </>
+                )}
+              </button>
+            </div>
+            {isLoadingVersions ? (
+              <div className="flex items-center justify-center py-8">
+                <svg className="animate-spin h-5 w-5 text-blue-600" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <span className="ml-2 text-sm text-slate-500">Loading versions...</span>
+              </div>
+            ) : versions.length === 0 ? (
+              <div className="text-center py-8 border border-dashed border-slate-200 rounded-lg">
+                <svg className="w-12 h-12 mx-auto text-slate-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p className="text-sm text-slate-500">No versions yet</p>
+                <p className="text-xs text-slate-400 mt-1">Create a version to snapshot the current model state.</p>
+              </div>
+            ) : (
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="text-left py-2 px-3 font-medium text-slate-600">#</th>
+                      <th className="text-left py-2 px-3 font-medium text-slate-600">Name</th>
+                      <th className="text-left py-2 px-3 font-medium text-slate-600">Created</th>
+                      <th className="text-left py-2 px-3 font-medium text-slate-600">By</th>
+                      <th className="text-right py-2 px-3 font-medium text-slate-600">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {versions.map((v) => (
+                      <tr key={v.id} className="border-t border-slate-100 hover:bg-slate-50/50">
+                        <td className="py-2 px-3 font-mono text-slate-600">{v.version_number}</td>
+                        <td className="py-2 px-3">{v.name || '-'}</td>
+                        <td className="py-2 px-3 text-slate-500">{new Date(v.created_at).toLocaleString()}</td>
+                        <td className="py-2 px-3 text-slate-500">{v.created_by}</td>
+                        <td className="py-2 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!confirm(`Restore model to version ${v.version_number}? Current state will be replaced.`)) return;
+                              setVersionActionLoading(v.id);
+                              try {
+                                await versionApi.restore(model.id, v.id);
+                                onRefreshModel?.();
+                                const res = await versionApi.list(model.id, { page: versionsPage, page_size: 10 });
+                                setVersions(res.versions || []);
+                                setVersionsTotal(res.total ?? 0);
+                              } catch (err) {
+                                console.error('Failed to restore:', err);
+                                alert(err instanceof Error ? err.message : 'Failed to restore version');
+                              } finally {
+                                setVersionActionLoading(null);
+                              }
+                            }}
+                            disabled={!!versionActionLoading}
+                            className="px-2 py-1 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded disabled:opacity-50"
+                          >
+                            {versionActionLoading === v.id ? 'Restoring...' : 'Restore'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {versionsTotal > 10 && (
+                  <div className="px-3 py-2 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
+                    <span>Showing {versions.length} of {versionsTotal}</span>
+                    <div className="space-x-2">
+                      <button
+                        type="button"
+                        disabled={versionsPage <= 1}
+                        onClick={() => setVersionsPage((p) => Math.max(1, p - 1))}
+                        className="text-blue-600 hover:underline disabled:opacity-50"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        disabled={versionsPage * 10 >= versionsTotal}
+                        onClick={() => setVersionsPage((p) => p + 1)}
+                        className="text-blue-600 hover:underline disabled:opacity-50"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

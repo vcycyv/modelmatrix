@@ -40,6 +40,10 @@ import (
 	invDomain "modelmatrix-server/internal/module/inventory/domain"
 	invRepo "modelmatrix-server/internal/module/inventory/repository"
 
+	// Folder module
+	folderApp "modelmatrix-server/internal/module/folder/application"
+	folderRepo "modelmatrix-server/internal/module/folder/repository"
+
 	"modelmatrix-server/pkg/config"
 	"modelmatrix-server/pkg/logger"
 
@@ -130,17 +134,31 @@ func setupTestServer(t *testing.T) *httptest.Server {
 	invDomainService := invDomain.NewService()
 	modelRepo := invRepo.NewModelRepository(database)
 	modelService := invApp.NewModelService(modelRepo, invDomainService, fileService)
-	modelController := invApi.NewModelController(modelService)
 
-	// Register model manage routes
-	modelController.RegisterRoutes(api, authMiddleware)
+	// --- Model Version Module ---
+	versionRepo := invRepo.NewModelVersionRepository(database)
+	versionService := invApp.NewModelVersionService(modelRepo, versionRepo, fileService.(fileservice.VersionStore))
+	versionController := invApi.NewVersionController(versionService)
+
+	// --- Folder Module (needed by build service) ---
+	folderRepoImpl := folderRepo.NewFolderRepository(database)
+	projectRepoImpl := folderRepo.NewProjectRepository(database)
+	folderSvc := folderApp.NewFolderService(database, folderRepoImpl, projectRepoImpl)
 
 	// --- Model Build Module ---
 	buildDomainService := buildDomain.NewService()
 	buildRepo := buildRepo.NewBuildRepository(database)
 	computeClient := &mockComputeClient{} // Mock client for integration tests
-	buildService := buildApp.NewBuildService(buildRepo, buildDomainService, computeClient, datasourceService, modelService, nil, nil, cfg)
+	performanceService := invApp.NewPerformanceService(invRepo.NewPerformanceRepository(database), modelRepo)
+	buildService := buildApp.NewBuildService(buildRepo, buildDomainService, computeClient, datasourceService, modelService, versionService, folderSvc, performanceService, cfg)
 	buildController := buildApi.NewBuildController(buildService)
+
+	// Register version routes
+	versionController.RegisterRoutes(api, authMiddleware)
+
+	// Model routes (with retrain)
+	modelControllerWithRetrain := invApi.NewModelControllerWithRetrain(modelService, buildService)
+	modelControllerWithRetrain.RegisterRoutes(api, authMiddleware)
 
 	// Register model build routes
 	buildController.RegisterRoutes(api, authMiddleware)

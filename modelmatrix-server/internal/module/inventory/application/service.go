@@ -30,6 +30,8 @@ type ModelService interface {
 
 	// Create from build (called when build completes)
 	CreateFromBuild(req *dto.CreateModelFromBuildRequest) (*dto.ModelResponse, error)
+	// UpdateFromBuild updates an existing model from a completed build (retrain callback)
+	UpdateFromBuild(modelID string, req *dto.CreateModelFromBuildRequest) (*dto.ModelResponse, error)
 
 	// Scoring
 	Score(modelID string, req *dto.ScoreRequest, scoredBy string) (*dto.ScoreResponse, error)
@@ -310,6 +312,88 @@ func (s *ModelServiceImpl) CreateFromBuild(req *dto.CreateModelFromBuildRequest)
 	logger.Info("Created model %s from build %s", model.ID, req.BuildID)
 
 	return toModelResponse(model), nil
+}
+
+// UpdateFromBuild updates an existing model from a completed build (used for retrain callback)
+func (s *ModelServiceImpl) UpdateFromBuild(modelID string, req *dto.CreateModelFromBuildRequest) (*dto.ModelResponse, error) {
+	model, err := s.modelRepo.GetByIDWithRelations(modelID)
+	if err != nil {
+		return nil, err
+	}
+
+	model.BuildID = req.BuildID
+	model.DatasourceID = req.DatasourceID
+	model.Metrics = convertMetrics(req.Metrics)
+	model.Version++
+
+	if err := s.modelRepo.Update(model); err != nil {
+		return nil, err
+	}
+
+	if err := s.modelRepo.DeleteVariablesByModelID(modelID); err != nil {
+		return nil, err
+	}
+	if err := s.modelRepo.DeleteFilesByModelID(modelID); err != nil {
+		return nil, err
+	}
+
+	variables := make([]domain.ModelVariable, 0, len(req.InputColumns)+1)
+	for i, colName := range req.InputColumns {
+		variable := domain.ModelVariable{
+			ModelID:  modelID,
+			Name:     colName,
+			DataType: domain.VariableDataTypeNumeric,
+			Role:     domain.VariableRoleInput,
+			Ordinal:  i,
+		}
+		if req.FeatureImportances != nil {
+			if imp, ok := req.FeatureImportances[colName]; ok {
+				variable.Importance = &imp
+			}
+		}
+		variables = append(variables, variable)
+	}
+	if req.TargetColumn != "" {
+		variables = append(variables, domain.ModelVariable{
+			ModelID:  modelID,
+			Name:     req.TargetColumn,
+			DataType: domain.VariableDataTypeNumeric,
+			Role:     domain.VariableRoleTarget,
+			Ordinal:  len(req.InputColumns),
+		})
+	}
+	if err := s.modelRepo.CreateVariables(variables); err != nil {
+		return nil, err
+	}
+
+	if req.ModelFilePath != "" {
+		file := domain.ModelFile{
+			ModelID:     modelID,
+			FileType:    domain.FileTypeModel,
+			FilePath:    req.ModelFilePath,
+			FileName:    filepath.Base(req.ModelFilePath),
+			Description: fmt.Sprintf("Trained %s model", req.Algorithm),
+		}
+		if err := s.modelRepo.CreateFile(&file); err != nil {
+			return nil, err
+		}
+	}
+	if req.CodeFilePath != "" {
+		codeFile := domain.ModelFile{
+			ModelID:     modelID,
+			FileType:    domain.FileTypeTrainingCode,
+			FilePath:    req.CodeFilePath,
+			FileName:    filepath.Base(req.CodeFilePath),
+			Description: "Python code used to train this model",
+		}
+		if err := s.modelRepo.CreateFile(&codeFile); err != nil {
+			return nil, err
+		}
+	}
+
+	logger.Info("Updated model %s from build %s (version %d)", modelID, req.BuildID, model.Version)
+	updated, _ := s.modelRepo.GetByID(modelID)
+	return toModelResponse(updated), nil
 }
 
 // Update updates an existing model

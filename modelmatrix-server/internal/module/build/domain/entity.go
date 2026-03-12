@@ -51,23 +51,24 @@ func (t ModelType) IsValid() bool {
 
 // ModelBuild represents a model training job (Domain Entity)
 type ModelBuild struct {
-	ID           string
-	Name         string
-	Description  string
-	DatasourceID string
-	ProjectID    *string // Belongs to project (one-to-many)
-	FolderID     *string // Belongs to folder directly (one-to-many)
-	ModelType    ModelType
-	Algorithm    string // ML algorithm (decision_tree, random_forest, xgboost)
-	Status       BuildStatus
-	Parameters   TrainingParameters
-	Metrics      *BuildMetrics
-	ErrorMessage string
-	StartedAt    *time.Time
-	CompletedAt  *time.Time
-	CreatedBy    string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID            string
+	Name          string
+	Description   string
+	DatasourceID  string
+	ProjectID     *string // Belongs to project (one-to-many)
+	FolderID      *string // Belongs to folder directly (one-to-many)
+	SourceModelID *string // If set, this build is a retrain of that model
+	ModelType     ModelType
+	Algorithm     string // ML algorithm (decision_tree, random_forest, xgboost)
+	Status        BuildStatus
+	Parameters    TrainingParameters
+	Metrics       *BuildMetrics
+	ErrorMessage  string
+	StartedAt     *time.Time
+	CompletedAt   *time.Time
+	CreatedBy     string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // TrainingParameters holds ML training configuration (hyperparameters only)

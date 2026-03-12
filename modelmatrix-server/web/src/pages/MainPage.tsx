@@ -10,6 +10,7 @@ import BuildModelDialog from '../components/BuildModelDialog';
 import BuildEditDialog from '../components/BuildEditDialog';
 import ModelEditDialog from '../components/ModelEditDialog';
 import ScoreModelDialog from '../components/ScoreModelDialog';
+import RetrainDialog from '../components/RetrainDialog';
 import ConfirmDialog from '../components/ConfirmDialog';
 import DataSourcePanel from '../components/DataSourcePanel';
 import { folderApi, projectApi, buildApi, modelApi, datasourceApi, collectionApi, Folder, Project, ModelBuild, Model, Collection, Datasource, FolderContentsCount } from '../lib/api';
@@ -81,6 +82,11 @@ export default function MainPage() {
     isOpen: boolean;
     model?: Model;
   }>({ isOpen: false });
+
+  const [retrainDialog, setRetrainDialog] = useState<{
+    isOpen: boolean;
+    model: Model | null;
+  }>({ isOpen: false, model: null });
 
   // Right panel tab state (for datasource data preview)
   const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('details');
@@ -794,6 +800,15 @@ export default function MainPage() {
             onCancelBuild={currentNode?.type === 'build' ? handleCancelBuild : undefined}
             onDeleteDataNode={currentDataNode ? handleDeleteDataNode : undefined}
             onScoreModel={currentNode?.type === 'model' ? () => setScoreDialog({ isOpen: true, model: currentNode.data as Model }) : undefined}
+            onRetrain={currentNode?.type === 'model' ? () => setRetrainDialog({ isOpen: true, model: currentNode.data as Model }) : undefined}
+            onRefreshModel={
+              currentNode?.type === 'model'
+                ? () => {
+                    refresh();
+                    modelApi.get(currentNode.id).then((m) => setSelectedNode((prev) => (prev?.id === currentNode.id ? { ...prev, data: m } : prev)));
+                  }
+                : undefined
+            }
             onNavigateToDatasource={handleNavigateToDatasource}
             onNavigateToBuild={handleNavigateToBuild}
           />
@@ -973,10 +988,24 @@ export default function MainPage() {
         isOpen={scoreDialog.isOpen}
         onClose={() => setScoreDialog({ isOpen: false })}
         onSuccess={() => {
-          // Refresh data tab to show new scored datasource
           setDataRefreshTrigger((prev) => prev + 1);
         }}
         model={scoreDialog.model}
+      />
+
+      <RetrainDialog
+        isOpen={retrainDialog.isOpen}
+        onClose={() => setRetrainDialog({ isOpen: false, model: null })}
+        onSuccess={(buildId) => {
+          refresh();
+          if (buildId) {
+            setActiveTab('explorer');
+            buildApi.get(buildId).then((build) => {
+              setSelectedNode({ id: build.id, name: build.name, type: 'build', data: build });
+            }).catch(() => {});
+          }
+        }}
+        model={retrainDialog.model}
       />
     </Layout>
   );

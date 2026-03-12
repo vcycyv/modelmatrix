@@ -162,15 +162,19 @@ func main() {
 	invDomainService := invDomain.NewService()
 	modelRepo := invRepo.NewModelRepository(database)
 	modelService := invApp.NewModelService(modelRepo, invDomainService, fileService)
-	modelController := invApi.NewModelController(modelService)
+
+	// --- Model Version Module ---
+	versionRepo := invRepo.NewModelVersionRepository(database)
+	versionService := invApp.NewModelVersionService(modelRepo, versionRepo, fileService.(fileservice.VersionStore))
+	versionController := invApi.NewVersionController(versionService)
 
 	// --- Performance Monitoring (part of inventory module) ---
 	performanceRepo := invRepo.NewPerformanceRepository(database)
 	performanceService := invApp.NewPerformanceService(performanceRepo, modelRepo)
 	performanceController := invApi.NewPerformanceController(performanceService)
 
-	// Register model manage routes
-	modelController.RegisterRoutes(api, authMiddleware)
+	// Register version routes (before model so /models/:id/versions are available)
+	versionController.RegisterRoutes(api, authMiddleware)
 
 	// Register performance monitoring routes
 	performanceController.RegisterRoutes(api, authMiddleware)
@@ -194,12 +198,16 @@ func main() {
 
 	// Configure compute for performance service
 	performanceService.ConfigureCompute(computeClient, dsGetter, cfg)
-	buildService := buildApp.NewBuildService(buildRepo, buildDomainService, computeClient, datasourceService, modelService, folderSvc, performanceService, cfg)
+	buildService := buildApp.NewBuildService(buildRepo, buildDomainService, computeClient, datasourceService, modelService, versionService, folderSvc, performanceService, cfg)
 	buildController := buildApi.NewBuildController(buildService)
 
 	// Wire up cascade delete dependencies (after services are created)
 	folderSvc.SetModelDeleter(modelService)
 	folderSvc.SetBuildDeleter(buildService)
+
+	// Re-register model controller with retrain (registers all model routes including POST /:id/retrain)
+	modelControllerWithRetrain := invApi.NewModelControllerWithRetrain(modelService, buildService)
+	modelControllerWithRetrain.RegisterRoutes(api, authMiddleware)
 
 	// Register model build routes
 	buildController.RegisterRoutes(api, authMiddleware)

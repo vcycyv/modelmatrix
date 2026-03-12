@@ -20,6 +20,7 @@ import (
 // BuildService defines the interface for build application service
 type BuildService interface {
 	Create(req *dto.CreateBuildRequest, createdBy string) (*dto.BuildResponse, error)
+	Retrain(modelID string, req *dto.RetrainRequest, createdBy string) (*dto.BuildResponse, error)
 	Update(id string, req *dto.UpdateBuildRequest) (*dto.BuildResponse, error)
 	Delete(id string) error
 	GetByID(id string) (*dto.BuildResponse, error)
@@ -40,6 +41,7 @@ type BuildServiceImpl struct {
 	computeClient       compute.Client
 	datasourceService   dsApp.DatasourceService
 	modelService        invApp.ModelService
+	versionService      invApp.ModelVersionService
 	folderService       folderApp.FolderService
 	performanceService invApp.PerformanceService // optional: for auto-baseline on model creation
 	config              *config.Config
@@ -52,6 +54,7 @@ func NewBuildService(
 	computeClient compute.Client,
 	datasourceService dsApp.DatasourceService,
 	modelService invApp.ModelService,
+	versionService invApp.ModelVersionService,
 	folderSvc folderApp.FolderService,
 	performanceService invApp.PerformanceService,
 	cfg *config.Config,
@@ -62,6 +65,7 @@ func NewBuildService(
 		computeClient:       computeClient,
 		datasourceService:   datasourceService,
 		modelService:        modelService,
+		versionService:      versionService,
 		folderService:       folderSvc,
 		performanceService:  performanceService,
 		config:              cfg,
@@ -136,6 +140,93 @@ func (s *BuildServiceImpl) Create(req *dto.CreateBuildRequest, createdBy string)
 	logger.Audit(createdBy, "create", "model_build", "", "success", nil)
 
 	return toBuildResponse(build), nil
+}
+
+// Retrain creates a new build from an existing model and starts training (no performance task required)
+func (s *BuildServiceImpl) Retrain(modelID string, req *dto.RetrainRequest, createdBy string) (*dto.BuildResponse, error) {
+	modelDetail, err := s.modelService.GetByID(modelID)
+	if err != nil {
+		return nil, err
+	}
+	if modelDetail == nil {
+		return nil, fmt.Errorf("model not found: %s", modelID)
+	}
+	model := &modelDetail.ModelResponse
+
+	datasourceID := model.DatasourceID
+	if req != nil && req.DatasourceID != nil && *req.DatasourceID != "" {
+		datasourceID = *req.DatasourceID
+	}
+
+	var inputColumns []string
+	for _, v := range modelDetail.Variables {
+		if v.Role == "input" {
+			inputColumns = append(inputColumns, v.Name)
+		}
+	}
+	if len(inputColumns) == 0 {
+		return nil, fmt.Errorf("model has no input variables")
+	}
+
+	modelType := domain.ModelType(model.ModelType)
+	params := s.domainService.GetDefaultParameters(modelType)
+	if model.BuildID != "" {
+		existingBuild, _ := s.buildRepo.GetByID(model.BuildID)
+		if existingBuild != nil {
+			params = existingBuild.Parameters
+		}
+	}
+	if req != nil && req.Parameters != nil {
+		if req.Parameters.Hyperparameters != nil {
+			params.Hyperparameters = req.Parameters.Hyperparameters
+		}
+		if req.Parameters.TrainTestSplit > 0 {
+			params.TrainTestSplit = req.Parameters.TrainTestSplit
+		}
+		if req.Parameters.RandomSeed > 0 {
+			params.RandomSeed = req.Parameters.RandomSeed
+		}
+		if req.Parameters.MaxIterations > 0 {
+			params.MaxIterations = req.Parameters.MaxIterations
+		}
+		if req.Parameters.EarlyStopRounds > 0 {
+			params.EarlyStopRounds = req.Parameters.EarlyStopRounds
+		}
+	}
+
+	name := "Retrain: " + model.Name
+	if req != nil && req.Name != nil && *req.Name != "" {
+		name = *req.Name
+	}
+
+	build := &domain.ModelBuild{
+		Name:          name,
+		Description:   "Retrain of model " + modelID,
+		DatasourceID:  datasourceID,
+		ProjectID:     model.ProjectID,
+		FolderID:      model.FolderID,
+		SourceModelID: &modelID,
+		ModelType:     modelType,
+		Algorithm:     model.Algorithm,
+		Status:        domain.BuildStatusPending,
+		Parameters:    params,
+		CreatedBy:     createdBy,
+	}
+	if err := s.domainService.ValidateBuild(build); err != nil {
+		return nil, err
+	}
+	existingNames, err := s.buildRepo.GetAllNames()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.domainService.ValidateBuildNameUnique(build.Name, existingNames); err != nil {
+		return nil, err
+	}
+	if err := s.buildRepo.Create(build); err != nil {
+		return nil, err
+	}
+	// Start the build
+	return s.Start(build.ID)
 }
 
 // Update updates an existing model build
@@ -461,9 +552,38 @@ func (s *BuildServiceImpl) HandleCallback(req *dto.BuildCallbackRequest) error {
 
 	// Create model if build completed successfully
 	if req.Status == "completed" {
-		if err := s.createModelFromBuild(build, req); err != nil {
-			logger.Error("Failed to create model from build: %v", err)
-			// Don't return error - build was successful, model creation can be retried
+		if build.SourceModelID != nil && *build.SourceModelID != "" {
+			// Retrain: snapshot current model to version, then update model in place
+			if s.versionService != nil {
+				if _, err := s.versionService.CreateVersion(*build.SourceModelID, "system"); err != nil {
+					logger.Error("Failed to create version snapshot before retrain: %v", err)
+				}
+			}
+			if err := s.updateModelFromBuild(*build.SourceModelID, build, req); err != nil {
+				logger.Error("Failed to update model from retrain build: %v", err)
+			} else if s.performanceService != nil && len(req.Metrics) > 0 {
+				metricsFloat := make(map[string]float64)
+				for k, v := range req.Metrics {
+					switch val := v.(type) {
+					case float64:
+						metricsFloat[k] = val
+					case int:
+						metricsFloat[k] = float64(val)
+					case int64:
+						metricsFloat[k] = float64(val)
+					}
+				}
+				if len(metricsFloat) > 0 {
+					s.performanceService.CreateBaseline(*build.SourceModelID, &invDto.CreateBaselineRequest{
+						Metrics:     metricsFloat,
+						Description: "Baseline from retrain",
+					}, "system")
+				}
+			}
+		} else {
+			if err := s.createModelFromBuild(build, req); err != nil {
+				logger.Error("Failed to create model from build: %v", err)
+			}
 		}
 	}
 
@@ -570,6 +690,53 @@ func (s *BuildServiceImpl) createModelFromBuild(build *domain.ModelBuild, callba
 	}
 
 	return nil
+}
+
+// updateModelFromBuild updates an existing model from a completed retrain build
+func (s *BuildServiceImpl) updateModelFromBuild(modelID string, build *domain.ModelBuild, callback *dto.BuildCallbackRequest) error {
+	datasourceDetail, err := s.datasourceService.GetByID(build.DatasourceID)
+	if err != nil {
+		return fmt.Errorf("failed to get datasource: %w", err)
+	}
+	var targetColumn string
+	var datasourceInputColumns []string
+	for _, col := range datasourceDetail.Columns {
+		if col.Role == string(dsDomain.ColumnRoleTarget) {
+			targetColumn = col.Name
+		} else if col.Role == string(dsDomain.ColumnRoleInput) {
+			datasourceInputColumns = append(datasourceInputColumns, col.Name)
+		}
+	}
+	modelInputColumns := callback.FeatureNames
+	if len(modelInputColumns) == 0 {
+		modelInputColumns = datasourceInputColumns
+	}
+	var modelFilePath, codeFilePath string
+	if callback.ModelPath != nil {
+		modelFilePath = *callback.ModelPath
+	}
+	if callback.CodePath != nil {
+		codeFilePath = *callback.CodePath
+	}
+	createReq := &invDto.CreateModelFromBuildRequest{
+		BuildID:            build.ID,
+		Name:               build.Name,
+		Description:        build.Description,
+		DatasourceID:       build.DatasourceID,
+		ProjectID:          build.ProjectID,
+		FolderID:           build.FolderID,
+		Algorithm:          build.Algorithm,
+		ModelType:          string(build.ModelType),
+		TargetColumn:       targetColumn,
+		InputColumns:       modelInputColumns,
+		FeatureImportances: callback.FeatureImportances,
+		ModelFilePath:      modelFilePath,
+		CodeFilePath:       codeFilePath,
+		Metrics:            callback.Metrics,
+		CreatedBy:          build.CreatedBy,
+	}
+	_, err = s.modelService.UpdateFromBuild(modelID, createReq)
+	return err
 }
 
 // convertMetrics converts metrics map to domain struct
