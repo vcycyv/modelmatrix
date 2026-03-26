@@ -172,33 +172,53 @@ export default function BuildModelDialog({
     }
   }, [datasourceId]);
 
-  // Auto-detect model type based on target column data type
+  // Auto-detect model type based on target column data type (+ cardinality for numeric columns)
   useEffect(() => {
     if (columns.length === 0) return;
 
     const targetColumn = columns.find(col => col.role === 'target');
-    
+
     if (!targetColumn) {
-      // No target column → Clustering
       setModelType('clustering');
-    } else {
-      // Determine model type based on target column data type
-      const dataType = targetColumn.data_type?.toLowerCase() || '';
-      
-      if (dataType.includes('int') || dataType.includes('float') || dataType === 'float64' || dataType === 'int64') {
-        // Numeric target → Regression (could also be classification for discrete integers)
-        // Check if it looks like a categorical integer (e.g., 0/1 for binary classification)
-        // For now, default numeric to regression; user can change if needed
-        setModelType('regression');
-      } else if (dataType === 'boolean' || dataType === 'bool') {
-        // Boolean → Classification
-        setModelType('classification');
-      } else {
-        // String/object/categorical → Classification
-        setModelType('classification');
-      }
+      return;
     }
-  }, [columns]);
+
+    const dataType = targetColumn.data_type?.toLowerCase() || '';
+
+    if (dataType === 'boolean' || dataType === 'bool') {
+      setModelType('classification');
+      return;
+    }
+
+    if (!dataType.includes('int') && !dataType.includes('float') && dataType !== 'float64' && dataType !== 'int64') {
+      // Non-numeric → Classification
+      setModelType('classification');
+      return;
+    }
+
+    // Numeric target: peek at unique values from the data preview to decide
+    // ≤ 20 distinct values → likely discrete labels → Classification; otherwise Regression
+    if (datasourceId) {
+      datasourceApi.getPreview(datasourceId, 500).then((preview) => {
+        const targetName = targetColumn.name;
+        const uniqueVals = new Set(
+          preview.rows
+            .map((row) => row[targetName])
+            .filter((v) => v !== null && v !== undefined && v !== '')
+        );
+        if (uniqueVals.size <= 20) {
+          setModelType('classification');
+        } else {
+          setModelType('regression');
+        }
+      }).catch(() => {
+        // Preview unavailable; fall back to regression for numeric
+        setModelType('regression');
+      });
+    } else {
+      setModelType('regression');
+    }
+  }, [columns, datasourceId]);
 
   useEffect(() => {
     const typeConfig = MODEL_TYPES.find((t) => t.value === modelType);
@@ -322,7 +342,7 @@ export default function BuildModelDialog({
 
         {/* Row 2: Collection + Data Source */}
         <div className="grid grid-cols-2 gap-3">
-          <div>
+          <div className="min-w-0">
             <label className="block text-xs font-medium text-slate-600 mb-1">
               Collection <span className="text-red-500">*</span>
             </label>
@@ -340,15 +360,15 @@ export default function BuildModelDialog({
               ))}
             </select>
           </div>
-          <div>
+          <div className="min-w-0">
             <label className="block text-xs font-medium text-slate-600 mb-1">
               Data Source <span className="text-red-500">*</span>
             </label>
-            <div className="flex gap-1">
+            <div className="flex gap-1 min-w-0">
               <select
                 value={datasourceId}
                 onChange={(e) => setDatasourceId(e.target.value)}
-                className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                className="min-w-0 flex-1 px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 required
                 disabled={!collectionId}
               >
@@ -365,7 +385,7 @@ export default function BuildModelDialog({
                 <button
                   type="button"
                   onClick={() => setShowColumns(!showColumns)}
-                  className="px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded border border-slate-300"
+                  className="flex-shrink-0 px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded border border-slate-300 whitespace-nowrap"
                   title="View columns"
                 >
                   {loadingColumns ? '...' : `${columns.length} cols`}

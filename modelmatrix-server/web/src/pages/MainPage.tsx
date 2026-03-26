@@ -1,4 +1,4 @@
-import { useState, MouseEvent, useEffect } from 'react';
+import { useState, MouseEvent, useEffect, useCallback } from 'react';
 import Layout from '../components/Layout';
 import TreeView, { TreeNode } from '../components/TreeView';
 import DetailPanel, { DataNode } from '../components/DetailPanel';
@@ -13,7 +13,8 @@ import ScoreModelDialog from '../components/ScoreModelDialog';
 import RetrainDialog from '../components/RetrainDialog';
 import ConfirmDialog from '../components/ConfirmDialog';
 import DataSourcePanel from '../components/DataSourcePanel';
-import { folderApi, projectApi, buildApi, modelApi, datasourceApi, collectionApi, Folder, Project, ModelBuild, Model, Collection, Datasource, FolderContentsCount } from '../lib/api';
+import SearchPanel from '../components/SearchPanel';
+import { folderApi, projectApi, buildApi, modelApi, datasourceApi, collectionApi, Folder, Project, ModelBuild, Model, Collection, Datasource, FolderContentsCount, SearchResultItem } from '../lib/api';
 
 type RightPanelTab = 'details' | 'data';
 
@@ -91,10 +92,25 @@ export default function MainPage() {
   // Right panel tab state (for datasource data preview)
   const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('details');
 
+  // Search panel state
+  const [searchOpen, setSearchOpen] = useState(false);
+
   // Reset right panel tab when data node selection changes (for data preview tab)
   useEffect(() => {
     setRightPanelTab('details');
   }, [selectedDataNode?.id]);
+
+  // ⌘K / Ctrl+K opens search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   // Refresh tree
   const refresh = () => setRefreshTrigger((prev) => prev + 1);
@@ -104,6 +120,33 @@ export default function MainPage() {
     setSelectedNode(node);
     // Don't clear data selection - preserve state when switching tabs
   };
+
+  // Navigate to a search result by loading its full data and selecting it
+  const handleSearchResult = useCallback(async (item: SearchResultItem) => {
+    try {
+      if (item.type === 'build') {
+        const build = await buildApi.get(item.id);
+        setActiveTab('explorer');
+        setSelectedNode({ id: item.id, name: item.name, type: 'build', data: build });
+      } else if (item.type === 'model') {
+        const model = await modelApi.get(item.id);
+        setActiveTab('explorer');
+        setSelectedNode({ id: item.id, name: item.name, type: 'model', data: model });
+      } else if (item.type === 'project') {
+        const project = await projectApi.getProject(item.id);
+        setActiveTab('explorer');
+        setSelectedNode({ id: item.id, name: item.name, type: 'project', data: project });
+      } else if (item.type === 'folder') {
+        const folder = await folderApi.getFolder(item.id);
+        setActiveTab('explorer');
+        setSelectedNode({ id: item.id, name: item.name, type: 'folder', data: folder });
+      }
+    } catch {
+      // Fallback: select with partial data
+      setActiveTab('explorer');
+      setSelectedNode({ id: item.id, name: item.name, type: item.type as TreeNode['type'], data: {} as Model });
+    }
+  }, []);
 
   // Handle data item selection from Data tab
   const handleDataSelect = (item: { type: 'collection' | 'datasource'; data: Collection | Datasource }) => {
@@ -559,6 +602,16 @@ export default function MainPage() {
       <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-700">Explorer</h2>
         <div className="flex items-center space-x-1">
+          {/* Search button */}
+          <button
+            onClick={() => setSearchOpen(true)}
+            className="p-1.5 rounded text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            title="Search (⌘K)"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
+            </svg>
+          </button>
           <button
             onClick={() => setFolderDialog({ 
               isOpen: true, 
@@ -822,6 +875,15 @@ export default function MainPage() {
   return (
     <Layout sidebar={sidebar}>
       {rightPanelContent}
+
+      {/* Search Panel */}
+      <SearchPanel
+        isOpen={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onSelectResult={handleSearchResult}
+        scopeFolderId={selectedNode?.type === 'folder' ? selectedNode.id : undefined}
+        scopeFolderName={selectedNode?.type === 'folder' ? selectedNode.name : undefined}
+      />
 
       {/* Context Menu */}
       {contextMenu && (

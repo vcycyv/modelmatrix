@@ -574,9 +574,15 @@ func (s *BuildServiceImpl) HandleCallback(req *dto.BuildCallbackRequest) error {
 					}
 				}
 				if len(metricsFloat) > 0 {
-					s.performanceService.CreateBaseline(*build.SourceModelID, &invDto.CreateBaselineRequest{
+					_, _ = s.performanceService.CreateBaseline(*build.SourceModelID, &invDto.CreateBaselineRequest{
 						Metrics:     metricsFloat,
 						Description: "Baseline from retrain",
+					}, "system")
+					// Record the same metrics as the initial "current" so baseline and current match right after retrain
+					_, _ = s.performanceService.RecordPerformance(*build.SourceModelID, &invDto.RecordPerformanceRequest{
+						DatasourceID: build.DatasourceID,
+						Metrics:      metricsFloat,
+						SampleCount:  0,
 					}, "system")
 				}
 			}

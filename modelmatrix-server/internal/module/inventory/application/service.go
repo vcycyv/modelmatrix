@@ -412,8 +412,11 @@ func (s *ModelServiceImpl) Update(id string, req *dto.UpdateModelRequest) (*dto.
 		}
 		model.Name = *req.Name
 	}
+	// Apply description: both nil (UI cleared field) and non-nil update the field
 	if req.Description != nil {
 		model.Description = *req.Description
+	} else {
+		model.Description = ""
 	}
 
 	// Validate using domain service

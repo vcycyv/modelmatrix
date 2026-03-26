@@ -124,6 +124,34 @@ func (t *PerformanceThreshold) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+// PerformanceThresholdDefault stores org-wide default thresholds used when a new model baseline is created
+type PerformanceThresholdDefault struct {
+	ID                  string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	TaskType            string    `gorm:"type:varchar(50);not null;uniqueIndex:idx_threshold_default_task_metric"`
+	MetricName          string    `gorm:"type:varchar(100);not null;uniqueIndex:idx_threshold_default_task_metric"`
+	WarningThreshold    float64   `gorm:"type:decimal(10,4);not null"`
+	CriticalThreshold   float64   `gorm:"type:decimal(10,4);not null"`
+	Direction           string    `gorm:"type:varchar(10);not null;default:'lower'"`
+	Enabled             bool      `gorm:"not null;default:true"`
+	ConsecutiveBreaches int       `gorm:"not null;default:2"`
+	UpdatedBy           string    `gorm:"type:varchar(255);not null;default:''"`
+	CreatedAt           time.Time `gorm:"autoCreateTime"`
+	UpdatedAt           time.Time `gorm:"autoUpdateTime"`
+}
+
+// TableName returns the table name for PerformanceThresholdDefault
+func (PerformanceThresholdDefault) TableName() string {
+	return "performance_threshold_defaults"
+}
+
+// BeforeCreate generates UUID before creating record
+func (t *PerformanceThresholdDefault) BeforeCreate(tx *gorm.DB) error {
+	if t.ID == "" {
+		t.ID = uuid.New().String()
+	}
+	return nil
+}
+
 // PerformanceEvaluation stores the full evaluation job results
 type PerformanceEvaluation struct {
 	ID           string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`

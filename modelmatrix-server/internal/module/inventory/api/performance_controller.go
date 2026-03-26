@@ -56,6 +56,14 @@ func (c *PerformanceController) RegisterRoutes(router *gin.RouterGroup, authMidd
 
 	// Callback endpoint (no auth, called by compute service)
 	router.POST("/models/:id/performance/evaluations/:evaluationId/callback", c.EvaluationCallback)
+
+	// Global threshold default settings (admin only)
+	defaults := router.Group("/performance/threshold-defaults")
+	defaults.Use(authMiddleware)
+	{
+		defaults.GET("", auth.RequireViewer(), c.GetThresholdDefaults)
+		defaults.PUT("", auth.RequireAdmin(), c.UpsertThresholdDefault)
+	}
 }
 
 // GetSummary godoc
@@ -487,6 +495,58 @@ func (c *PerformanceController) UpdateThreshold(ctx *gin.Context) {
 	response.Success(ctx, result)
 }
 
+// GetThresholdDefaults godoc
+// @Summary Get global threshold defaults
+// @Description Retrieves org-wide default threshold settings for a task type
+// @Tags Performance Settings
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param task_type query string true "Task type" Enums(classification,regression)
+// @Success 200 {object} response.Response{data=dto.ThresholdDefaultsListResponse}
+// @Failure 401 {object} response.Response
+// @Router /api/performance/threshold-defaults [get]
+func (c *PerformanceController) GetThresholdDefaults(ctx *gin.Context) {
+	taskType := ctx.Query("task_type")
+	if taskType == "" {
+		response.BadRequest(ctx, "task_type query parameter is required")
+		return
+	}
+	result, err := c.performanceService.GetThresholdDefaults(taskType)
+	if err != nil {
+		handlePerformanceError(ctx, err)
+		return
+	}
+	response.Success(ctx, result)
+}
+
+// UpsertThresholdDefault godoc
+// @Summary Update global threshold default
+// @Description Creates or updates an org-wide threshold default (admin only)
+// @Tags Performance Settings
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param body body dto.UpdateThresholdDefaultRequest true "Default threshold settings"
+// @Success 200 {object} response.Response{data=dto.PerformanceThresholdDefaultResponse}
+// @Failure 400 {object} response.Response
+// @Failure 401 {object} response.Response
+// @Failure 403 {object} response.Response
+// @Router /api/performance/threshold-defaults [put]
+func (c *PerformanceController) UpsertThresholdDefault(ctx *gin.Context) {
+	var req dto.UpdateThresholdDefaultRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(ctx, err.Error())
+		return
+	}
+	username := auth.GetUsername(ctx)
+	result, err := c.performanceService.UpsertThresholdDefault(&req, username)
+	if err != nil {
+		handlePerformanceError(ctx, err)
+		return
+	}
+	response.Success(ctx, result)
+}
+
 // handlePerformanceError maps domain errors to HTTP responses
 func handlePerformanceError(ctx *gin.Context, err error) {
 	switch err {
@@ -512,6 +572,8 @@ func handlePerformanceError(ctx *gin.Context, err error) {
 		response.Conflict(ctx, "evaluation is already running")
 	case domain.ErrNoActualTargetColumn:
 		response.BadRequest(ctx, "no actual target column found in evaluation data")
+	case domain.ErrInvalidThresholdValues:
+		response.BadRequest(ctx, "thresholds must be positive and warning must not exceed critical")
 	default:
 		response.InternalError(ctx, err.Error())
 	}

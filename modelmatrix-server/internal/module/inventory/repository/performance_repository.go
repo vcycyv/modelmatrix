@@ -42,6 +42,10 @@ type PerformanceRepository interface {
 	GetThresholdsByModelID(modelID string) ([]domain.PerformanceThreshold, error)
 	DeleteThresholdsByModelID(modelID string) error
 
+	// Global threshold default operations
+	GetThresholdDefaultsByTaskType(taskType string) ([]domain.PerformanceThresholdDefault, error)
+	UpsertThresholdDefault(d *domain.PerformanceThresholdDefault) error
+
 	// Evaluation operations
 	CreateEvaluation(evaluation *domain.PerformanceEvaluation) error
 	UpdateEvaluation(evaluation *domain.PerformanceEvaluation) error
@@ -582,4 +586,68 @@ func (r *PerformanceRepositoryImpl) evaluationToDomain(m *model.PerformanceEvalu
 		eval.Metrics = map[string]interface{}(m.Metrics)
 	}
 	return eval
+}
+
+// === Global threshold defaults ===
+
+func (r *PerformanceRepositoryImpl) GetThresholdDefaultsByTaskType(taskType string) ([]domain.PerformanceThresholdDefault, error) {
+	var rows []model.PerformanceThresholdDefault
+	if err := r.db.Where("task_type = ?", taskType).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	result := make([]domain.PerformanceThresholdDefault, len(rows))
+	for i, m := range rows {
+		result[i] = r.thresholdDefaultToDomain(&m)
+	}
+	return result, nil
+}
+
+func (r *PerformanceRepositoryImpl) UpsertThresholdDefault(d *domain.PerformanceThresholdDefault) error {
+	existing := &model.PerformanceThresholdDefault{}
+	err := r.db.Where("task_type = ? AND metric_name = ?", string(d.TaskType), d.MetricName).First(existing).Error
+	if err == gorm.ErrRecordNotFound {
+		dbModel := r.thresholdDefaultToModel(d)
+		return r.db.Create(dbModel).Error
+	}
+	if err != nil {
+		return err
+	}
+	return r.db.Model(existing).Updates(map[string]interface{}{
+		"warning_threshold":    d.WarningThreshold,
+		"critical_threshold":   d.CriticalThreshold,
+		"direction":            string(d.Direction),
+		"enabled":              d.Enabled,
+		"consecutive_breaches": d.ConsecutiveBreaches,
+		"updated_by":           d.UpdatedBy,
+	}).Error
+}
+
+func (r *PerformanceRepositoryImpl) thresholdDefaultToModel(d *domain.PerformanceThresholdDefault) *model.PerformanceThresholdDefault {
+	return &model.PerformanceThresholdDefault{
+		ID:                  d.ID,
+		TaskType:            string(d.TaskType),
+		MetricName:          d.MetricName,
+		WarningThreshold:    d.WarningThreshold,
+		CriticalThreshold:   d.CriticalThreshold,
+		Direction:           string(d.Direction),
+		Enabled:             d.Enabled,
+		ConsecutiveBreaches: d.ConsecutiveBreaches,
+		UpdatedBy:           d.UpdatedBy,
+	}
+}
+
+func (r *PerformanceRepositoryImpl) thresholdDefaultToDomain(m *model.PerformanceThresholdDefault) domain.PerformanceThresholdDefault {
+	return domain.PerformanceThresholdDefault{
+		ID:                  m.ID,
+		TaskType:            domain.TaskType(m.TaskType),
+		MetricName:          m.MetricName,
+		WarningThreshold:    m.WarningThreshold,
+		CriticalThreshold:   m.CriticalThreshold,
+		Direction:           domain.ThresholdDirection(m.Direction),
+		Enabled:             m.Enabled,
+		ConsecutiveBreaches: m.ConsecutiveBreaches,
+		UpdatedBy:           m.UpdatedBy,
+		CreatedAt:           m.CreatedAt,
+		UpdatedAt:           m.UpdatedAt,
+	}
 }

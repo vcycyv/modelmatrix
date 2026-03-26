@@ -331,6 +331,20 @@ export interface PerformanceThreshold {
   updated_at: string;
 }
 
+export interface PerformanceThresholdDefault {
+  id?: string;
+  task_type: string;
+  metric_name: string;
+  warning_threshold: number;
+  critical_threshold: number;
+  direction: 'lower' | 'higher';
+  enabled: boolean;
+  consecutive_breaches: number;
+  updated_by?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface PerformanceEvaluation {
   id: string;
   model_id: string;
@@ -450,6 +464,25 @@ export const performanceApi = {
     consecutive_breaches?: number;
   }) =>
     request<PerformanceThreshold>(`/models/${modelId}/performance/thresholds`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  // Global threshold defaults
+  getThresholdDefaults: (taskType: string) =>
+    request<{ task_type: string; defaults: PerformanceThresholdDefault[] }>(
+      `/performance/threshold-defaults?task_type=${encodeURIComponent(taskType)}`
+    ),
+  upsertThresholdDefault: (data: {
+    task_type: string;
+    metric_name: string;
+    warning_threshold?: number;
+    critical_threshold?: number;
+    direction?: 'lower' | 'higher';
+    enabled?: boolean;
+    consecutive_breaches?: number;
+  }) =>
+    request<PerformanceThresholdDefault>(`/performance/threshold-defaults`, {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
@@ -664,4 +697,36 @@ export interface Column {
   created_at: string;
   updated_at: string;
 }
+
+// Search API
+export type SearchResourceType = 'all' | 'build' | 'model' | 'project' | 'folder';
+
+export interface SearchResultItem {
+  type: 'build' | 'model' | 'project' | 'folder';
+  id: string;
+  name: string;
+  description: string;
+  status?: string;
+  model_type?: string;
+  algorithm?: string;
+  folder_id?: string;
+  project_id?: string;
+  breadcrumb: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface SearchResponse {
+  query: string;
+  total: number;
+  results: SearchResultItem[];
+}
+
+export const searchApi = {
+  search: (q: string, type: SearchResourceType = 'all', folderId?: string) => {
+    const params = new URLSearchParams({ q, type });
+    if (folderId) params.set('folder_id', folderId);
+    return request<SearchResponse>(`/search?${params.toString()}`);
+  },
+};
 

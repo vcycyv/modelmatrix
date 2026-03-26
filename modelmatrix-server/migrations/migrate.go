@@ -39,6 +39,7 @@ func Migrate(db *gorm.DB) error {
 		&mmModel.PerformanceRecord{},
 		&mmModel.PerformanceAlert{},
 		&mmModel.PerformanceThreshold{},
+		&mmModel.PerformanceThresholdDefault{},
 		&mmModel.PerformanceEvaluation{},
 	}
 

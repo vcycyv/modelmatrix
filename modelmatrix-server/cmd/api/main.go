@@ -36,6 +36,9 @@ import (
 	folderApp "modelmatrix-server/internal/module/folder/application"
 	folderRepo "modelmatrix-server/internal/module/folder/repository"
 
+	// Search module
+	searchApi "modelmatrix-server/internal/module/search/api"
+
 	"modelmatrix-server/pkg/config"
 	"modelmatrix-server/pkg/logger"
 	"modelmatrix-server/pkg/response"
@@ -217,6 +220,10 @@ func main() {
 
 	// Register folder routes
 	folderController.RegisterRoutes(api, authMiddleware)
+
+	// --- Search ---
+	searchController := searchApi.NewSearchController(database)
+	searchController.RegisterRoutes(api, authMiddleware)
 
 	// Serve static files for the web UI
 	setupStaticFileServing(router)

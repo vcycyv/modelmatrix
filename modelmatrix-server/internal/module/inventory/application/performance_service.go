@@ -38,6 +38,10 @@ type PerformanceService interface {
 	UpdateThreshold(modelID string, req *dto.UpdateThresholdRequest) (*dto.PerformanceThresholdResponse, error)
 	InitializeDefaultThresholds(modelID string, taskType domain.TaskType) error
 
+	// Global threshold default operations
+	GetThresholdDefaults(taskType string) (*dto.ThresholdDefaultsListResponse, error)
+	UpsertThresholdDefault(req *dto.UpdateThresholdDefaultRequest, updatedBy string) (*dto.PerformanceThresholdDefaultResponse, error)
+
 	// Summary
 	GetPerformanceSummary(modelID string) (*dto.PerformanceSummaryResponse, error)
 
@@ -265,7 +269,7 @@ func (s *PerformanceServiceImpl) checkAndCreateAlert(modelID string, record *dom
 
 	breached, severity := threshold.CheckBreach(*record.DriftPercentage)
 	if !breached {
-		logger.Info("No alert: metric %s drift %.2f%% below threshold (warning=%.1f%%, critical=%.1f%%)",
+		logger.Info("No alert: metric %s drift %.2f%% (warning=%.1f%%, critical=%.1f%%; positive drift = degradation)",
 			record.MetricName, *record.DriftPercentage, threshold.WarningThreshold, threshold.CriticalThreshold)
 		return
 	}
@@ -453,16 +457,16 @@ func (s *PerformanceServiceImpl) runEvaluation(evaluation *domain.PerformanceEva
 
 	// Call compute service
 	evalReq := &compute.EvaluateRequest{
-		EvaluationID:     evaluation.ID,
-		ModelID:          model.ID,
-		ModelFilePath:    modelFilePath,
+		EvaluationID:       evaluation.ID,
+		ModelID:            model.ID,
+		ModelFilePath:      modelFilePath,
 		DatasourceFilePath: datasourcePath,
-		InputColumns:     inputColumns,
-		TargetColumn:     model.TargetColumn,
-		ActualColumn:     req.ActualColumn,
-		PredictionColumn: req.PredictionColumn,
-		ModelType:        model.ModelType,
-		CallbackURL:      callbackURL,
+		InputColumns:       inputColumns,
+		TargetColumn:       model.TargetColumn,
+		ActualColumn:       req.ActualColumn,
+		PredictionColumn:   req.PredictionColumn,
+		ModelType:          model.ModelType,
+		CallbackURL:        callbackURL,
 	}
 
 	_, err = s.computeClient.EvaluatePerformance(evalReq)
@@ -669,6 +673,13 @@ func (s *PerformanceServiceImpl) UpdateThreshold(modelID string, req *dto.Update
 		threshold.ConsecutiveBreaches = *req.ConsecutiveBreaches
 	}
 
+	if threshold.WarningThreshold <= 0 || threshold.CriticalThreshold <= 0 {
+		return nil, domain.ErrInvalidThresholdValues
+	}
+	if threshold.WarningThreshold > threshold.CriticalThreshold {
+		return nil, domain.ErrInvalidThresholdValues
+	}
+
 	if threshold.ID == "" {
 		if err := s.performanceRepo.CreateThreshold(threshold); err != nil {
 			return nil, err
@@ -693,9 +704,26 @@ func (s *PerformanceServiceImpl) UpdateThreshold(modelID string, req *dto.Update
 	}, nil
 }
 
-// InitializeDefaultThresholds creates default thresholds for a model
+// InitializeDefaultThresholds creates default thresholds for a model.
+// Uses DB global defaults when available, falls back to hardcoded domain defaults.
 func (s *PerformanceServiceImpl) InitializeDefaultThresholds(modelID string, taskType domain.TaskType) error {
-	defaults := domain.GetDefaultThresholds(taskType)
+	// Prefer DB global defaults; fall back to hardcoded constants
+	dbDefaults, err := s.performanceRepo.GetThresholdDefaultsByTaskType(string(taskType))
+	var defaults []domain.PerformanceThreshold
+	if err == nil && len(dbDefaults) > 0 {
+		for _, d := range dbDefaults {
+			defaults = append(defaults, domain.PerformanceThreshold{
+				MetricName:          d.MetricName,
+				WarningThreshold:    d.WarningThreshold,
+				CriticalThreshold:   d.CriticalThreshold,
+				Direction:           d.Direction,
+				Enabled:             d.Enabled,
+				ConsecutiveBreaches: d.ConsecutiveBreaches,
+			})
+		}
+	} else {
+		defaults = domain.GetDefaultThresholds(taskType)
+	}
 
 	for _, def := range defaults {
 		// Check if already exists
@@ -723,6 +751,129 @@ func (s *PerformanceServiceImpl) InitializeDefaultThresholds(modelID string, tas
 	}
 
 	return nil
+}
+
+// GetThresholdDefaults retrieves global threshold defaults for a task type.
+// The hardcoded constants are the canonical metric set; DB rows override individual entries.
+// This way editing one metric never hides the others.
+func (s *PerformanceServiceImpl) GetThresholdDefaults(taskType string) (*dto.ThresholdDefaultsListResponse, error) {
+	dbDefaults, err := s.performanceRepo.GetThresholdDefaultsByTaskType(taskType)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build lookup of DB-customised rows
+	dbMap := make(map[string]*domain.PerformanceThresholdDefault, len(dbDefaults))
+	for i := range dbDefaults {
+		dbMap[dbDefaults[i].MetricName] = &dbDefaults[i]
+	}
+
+	// Hardcoded constants define the canonical metric set for the task type
+	hardcoded := domain.GetDefaultThresholds(domain.TaskType(taskType))
+	responses := make([]dto.PerformanceThresholdDefaultResponse, len(hardcoded))
+	for i, h := range hardcoded {
+		if db, ok := dbMap[h.MetricName]; ok {
+			responses[i] = toThresholdDefaultResponse(db)
+		} else {
+			responses[i] = dto.PerformanceThresholdDefaultResponse{
+				TaskType:            taskType,
+				MetricName:          h.MetricName,
+				WarningThreshold:    h.WarningThreshold,
+				CriticalThreshold:   h.CriticalThreshold,
+				Direction:           string(h.Direction),
+				Enabled:             h.Enabled,
+				ConsecutiveBreaches: h.ConsecutiveBreaches,
+			}
+		}
+	}
+	return &dto.ThresholdDefaultsListResponse{TaskType: taskType, Defaults: responses}, nil
+}
+
+// UpsertThresholdDefault creates or updates a global threshold default
+func (s *PerformanceServiceImpl) UpsertThresholdDefault(req *dto.UpdateThresholdDefaultRequest, updatedBy string) (*dto.PerformanceThresholdDefaultResponse, error) {
+	// Load existing or start from hardcoded defaults for this metric
+	existing, _ := s.performanceRepo.GetThresholdDefaultsByTaskType(req.TaskType)
+	var current *domain.PerformanceThresholdDefault
+	for i := range existing {
+		if existing[i].MetricName == req.MetricName {
+			current = &existing[i]
+			break
+		}
+	}
+
+	if current == nil {
+		// Seed from hardcoded
+		hardcoded := domain.GetDefaultThresholds(domain.TaskType(req.TaskType))
+		for _, h := range hardcoded {
+			if h.MetricName == req.MetricName {
+				current = &domain.PerformanceThresholdDefault{
+					TaskType:            domain.TaskType(req.TaskType),
+					MetricName:          req.MetricName,
+					WarningThreshold:    h.WarningThreshold,
+					CriticalThreshold:   h.CriticalThreshold,
+					Direction:           h.Direction,
+					Enabled:             h.Enabled,
+					ConsecutiveBreaches: h.ConsecutiveBreaches,
+				}
+				break
+			}
+		}
+	}
+	if current == nil {
+		current = &domain.PerformanceThresholdDefault{
+			TaskType:            domain.TaskType(req.TaskType),
+			MetricName:          req.MetricName,
+			WarningThreshold:    10.0,
+			CriticalThreshold:   20.0,
+			Direction:           domain.ThresholdDirectionLower,
+			Enabled:             true,
+			ConsecutiveBreaches: 2,
+		}
+	}
+
+	if req.WarningThreshold != nil {
+		current.WarningThreshold = *req.WarningThreshold
+	}
+	if req.CriticalThreshold != nil {
+		current.CriticalThreshold = *req.CriticalThreshold
+	}
+	if req.Direction != nil {
+		current.Direction = domain.ThresholdDirection(*req.Direction)
+	}
+	if req.Enabled != nil {
+		current.Enabled = *req.Enabled
+	}
+	if req.ConsecutiveBreaches != nil {
+		current.ConsecutiveBreaches = *req.ConsecutiveBreaches
+	}
+	current.UpdatedBy = updatedBy
+
+	if current.WarningThreshold <= 0 || current.CriticalThreshold <= 0 || current.WarningThreshold > current.CriticalThreshold {
+		return nil, domain.ErrInvalidThresholdValues
+	}
+
+	if err := s.performanceRepo.UpsertThresholdDefault(current); err != nil {
+		return nil, err
+	}
+
+	resp := toThresholdDefaultResponse(current)
+	return &resp, nil
+}
+
+func toThresholdDefaultResponse(d *domain.PerformanceThresholdDefault) dto.PerformanceThresholdDefaultResponse {
+	return dto.PerformanceThresholdDefaultResponse{
+		ID:                  d.ID,
+		TaskType:            string(d.TaskType),
+		MetricName:          d.MetricName,
+		WarningThreshold:    d.WarningThreshold,
+		CriticalThreshold:   d.CriticalThreshold,
+		Direction:           string(d.Direction),
+		Enabled:             d.Enabled,
+		ConsecutiveBreaches: d.ConsecutiveBreaches,
+		UpdatedBy:           d.UpdatedBy,
+		CreatedAt:           d.CreatedAt,
+		UpdatedAt:           d.UpdatedAt,
+	}
 }
 
 // GetPerformanceSummary returns a summary of model performance status

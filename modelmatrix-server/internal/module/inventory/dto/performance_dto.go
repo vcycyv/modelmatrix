@@ -197,6 +197,38 @@ type ThresholdsListResponse struct {
 	Thresholds []PerformanceThresholdResponse `json:"thresholds"`
 }
 
+// UpdateThresholdDefaultRequest updates a global default threshold
+type UpdateThresholdDefaultRequest struct {
+	TaskType            string   `json:"task_type" binding:"required,oneof=classification regression" example:"classification"`
+	MetricName          string   `json:"metric_name" binding:"required" example:"accuracy"`
+	WarningThreshold    *float64 `json:"warning_threshold,omitempty" example:"5.0"`
+	CriticalThreshold   *float64 `json:"critical_threshold,omitempty" example:"10.0"`
+	Direction           *string  `json:"direction,omitempty" example:"lower"`
+	Enabled             *bool    `json:"enabled,omitempty" example:"true"`
+	ConsecutiveBreaches *int     `json:"consecutive_breaches,omitempty" example:"2"`
+}
+
+// PerformanceThresholdDefaultResponse is the API response for a global threshold default
+type PerformanceThresholdDefaultResponse struct {
+	ID                  string    `json:"id"`
+	TaskType            string    `json:"task_type"`
+	MetricName          string    `json:"metric_name"`
+	WarningThreshold    float64   `json:"warning_threshold"`
+	CriticalThreshold   float64   `json:"critical_threshold"`
+	Direction           string    `json:"direction"`
+	Enabled             bool      `json:"enabled"`
+	ConsecutiveBreaches int       `json:"consecutive_breaches"`
+	UpdatedBy           string    `json:"updated_by"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+// ThresholdDefaultsListResponse contains global defaults for a task type
+type ThresholdDefaultsListResponse struct {
+	TaskType  string                                `json:"task_type"`
+	Defaults  []PerformanceThresholdDefaultResponse `json:"defaults"`
+}
+
 // BaselinesListResponse contains a list of baselines
 type BaselinesListResponse struct {
 	Baselines []PerformanceBaselineResponse `json:"baselines"`

@@ -8,16 +8,17 @@ import (
 
 // Performance monitoring domain errors
 var (
-	ErrBaselineNotFound      = errors.New("performance baseline not found")
-	ErrRecordNotFound        = errors.New("performance record not found")
-	ErrAlertNotFound         = errors.New("performance alert not found")
-	ErrEvaluationNotFound    = errors.New("performance evaluation not found")
-	ErrThresholdNotFound     = errors.New("performance threshold not found")
-	ErrInvalidTaskType       = errors.New("invalid task type")
-	ErrInvalidAlertSeverity  = errors.New("invalid alert severity")
-	ErrInvalidAlertStatus    = errors.New("invalid alert status")
-	ErrEvaluationRunning     = errors.New("evaluation is already running")
-	ErrNoActualTargetColumn  = errors.New("no actual target column in evaluation data")
+	ErrBaselineNotFound       = errors.New("performance baseline not found")
+	ErrRecordNotFound         = errors.New("performance record not found")
+	ErrAlertNotFound          = errors.New("performance alert not found")
+	ErrEvaluationNotFound     = errors.New("performance evaluation not found")
+	ErrThresholdNotFound      = errors.New("performance threshold not found")
+	ErrInvalidTaskType        = errors.New("invalid task type")
+	ErrInvalidAlertSeverity   = errors.New("invalid alert severity")
+	ErrInvalidAlertStatus     = errors.New("invalid alert status")
+	ErrEvaluationRunning      = errors.New("evaluation is already running")
+	ErrNoActualTargetColumn   = errors.New("no actual target column in evaluation data")
+	ErrInvalidThresholdValues = errors.New("invalid threshold values")
 )
 
 // TaskType represents the ML task type
@@ -217,18 +218,22 @@ type PerformanceThreshold struct {
 	UpdatedAt           time.Time
 }
 
-// CheckBreach checks if a drift value breaches any threshold
+// CheckBreach checks if a drift value breaches any threshold.
+// driftPercentage must follow CalculateDrift semantics: positive = degradation, negative = improvement.
 func (t *PerformanceThreshold) CheckBreach(driftPercentage float64) (breached bool, severity AlertSeverity) {
 	if !t.Enabled {
 		return false, ""
 	}
 
-	absDrift := math.Abs(driftPercentage)
+	// Improvements (and no change) never breach; only compare magnitude of bad drift.
+	if driftPercentage <= 0 {
+		return false, ""
+	}
 
-	if absDrift >= t.CriticalThreshold {
+	if driftPercentage >= t.CriticalThreshold {
 		return true, AlertSeverityCritical
 	}
-	if absDrift >= t.WarningThreshold {
+	if driftPercentage >= t.WarningThreshold {
 		return true, AlertSeverityWarning
 	}
 	return false, ""
@@ -289,6 +294,21 @@ type PerformanceSummary struct {
 	DriftPercentages    map[string]float64
 	OverallHealthStatus string // healthy, warning, critical
 	RecordCount         int
+}
+
+// PerformanceThresholdDefault represents org-wide default thresholds stored in the database
+type PerformanceThresholdDefault struct {
+	ID                  string
+	TaskType            TaskType
+	MetricName          string
+	WarningThreshold    float64
+	CriticalThreshold   float64
+	Direction           ThresholdDirection
+	Enabled             bool
+	ConsecutiveBreaches int
+	UpdatedBy           string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // GetDefaultThresholds returns default threshold settings for a task type

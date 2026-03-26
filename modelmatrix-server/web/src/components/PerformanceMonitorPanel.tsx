@@ -57,6 +57,12 @@ export default function PerformanceMonitorPanel({ modelId, modelType, modelMetri
   const [recordMetrics, setRecordMetrics] = useState<Record<string, string>>({});
   const [recordDatasourceId, setRecordDatasourceId] = useState('');
 
+  // Threshold edit (warning / critical %)
+  const [thresholdEditMetric, setThresholdEditMetric] = useState<string | null>(null);
+  const [editWarningPct, setEditWarningPct] = useState('');
+  const [editCriticalPct, setEditCriticalPct] = useState('');
+  const [savingThreshold, setSavingThreshold] = useState(false);
+
   useEffect(() => {
     loadData();
   }, [modelId]);
@@ -160,6 +166,50 @@ export default function PerformanceMonitorPanel({ modelId, modelType, modelMetri
       loadData();
     } catch (err) {
       console.error('Failed to resolve alert:', err);
+    }
+  };
+
+  const startEditThreshold = (t: PerformanceThreshold) => {
+    setThresholdEditMetric(t.metric_name);
+    setEditWarningPct(String(t.warning_threshold));
+    setEditCriticalPct(String(t.critical_threshold));
+  };
+
+  const cancelEditThreshold = () => {
+    setThresholdEditMetric(null);
+    setEditWarningPct('');
+    setEditCriticalPct('');
+  };
+
+  const saveThresholdEdits = async (metricName: string) => {
+    const w = parseFloat(editWarningPct);
+    const c = parseFloat(editCriticalPct);
+    if (Number.isNaN(w) || Number.isNaN(c)) {
+      alert('Enter valid numbers for warning and critical thresholds.');
+      return;
+    }
+    if (w <= 0 || c <= 0) {
+      alert('Thresholds must be greater than zero.');
+      return;
+    }
+    if (w > c) {
+      alert('Warning must be less than or equal to critical (both are compared to absolute drift %).');
+      return;
+    }
+    setSavingThreshold(true);
+    try {
+      const updated = await performanceApi.updateThreshold(modelId, {
+        metric_name: metricName,
+        warning_threshold: w,
+        critical_threshold: c,
+      });
+      setThresholds((prev) => prev.map((row) => (row.metric_name === metricName ? updated : row)));
+      cancelEditThreshold();
+    } catch (err) {
+      console.error('Failed to update threshold:', err);
+      alert(err instanceof Error ? err.message : 'Failed to update threshold');
+    } finally {
+      setSavingThreshold(false);
     }
   };
 
@@ -310,21 +360,53 @@ export default function PerformanceMonitorPanel({ modelId, modelType, modelMetri
     return ((current - baseline) / baseline) * 100;
   };
 
-  /** Overall health: worst of backend alerts and drift severity (badge matches table). */
+  const thresholdForMetric = (metricName: string) =>
+    thresholds.find((t) => t.metric_name === metricName);
+
+  /**
+   * Raw % change from baseline. Magnitude of *degradation* only (undefined if improved or flat).
+   * Matches backend CalculateDrift: for "lower" bad, negative raw change is bad; for "higher" bad, positive raw is bad.
+   */
+  const badDriftMagnitude = (
+    displayDrift: number,
+    direction: 'lower' | 'higher'
+  ): number | undefined => {
+    if (direction === 'lower') {
+      if (displayDrift >= 0) return undefined;
+      return -displayDrift;
+    }
+    if (displayDrift <= 0) return undefined;
+    return displayDrift;
+  };
+
+  /** Classify vs configured thresholds (aligned with backend CheckBreach). */
+  const driftSeverityFromThresholds = (
+    displayDrift: number | undefined,
+    metricName: string
+  ): 'stable' | 'warning' | 'critical' | 'unknown' => {
+    if (displayDrift === undefined) return 'unknown';
+    const t = thresholdForMetric(metricName);
+    if (!t?.enabled) return 'stable';
+    const mag = badDriftMagnitude(displayDrift, t.direction);
+    if (mag === undefined) return 'stable';
+    if (mag >= t.critical_threshold) return 'critical';
+    if (mag >= t.warning_threshold) return 'warning';
+    return 'stable';
+  };
+
+  /** Overall health: worst of backend alerts and per-metric drift vs configured thresholds. */
   const effectiveHealthStatus: 'healthy' | 'warning' | 'critical' = (() => {
     const backend = summary?.overall_health_status ?? 'healthy';
     if (!summary || baselines.length === 0) return backend;
     let driftStatus: 'healthy' | 'warning' | 'critical' = 'healthy';
     for (const b of baselines) {
       const d = getDisplayDrift(b.metric_value, summary.latest_metrics?.[b.metric_name]);
-      if (d === undefined) continue;
-      const abs = Math.abs(d);
-      if (abs >= 20) {
+      const sev = driftSeverityFromThresholds(d, b.metric_name);
+      if (sev === 'critical') {
         driftStatus = 'critical';
         break;
       }
-      if (abs >= 10) driftStatus = 'warning';
-      else if (abs >= 5 && driftStatus === 'healthy') driftStatus = 'warning';
+      if (sev === 'warning') driftStatus = 'warning';
     }
     const order = { critical: 3, warning: 2, healthy: 1 };
     return order[driftStatus] >= order[backend] ? driftStatus : backend;
@@ -341,6 +423,18 @@ export default function PerformanceMonitorPanel({ modelId, modelType, modelMetri
     if (Math.abs(drift) < 5) return 'text-emerald-600';
     if (Math.abs(drift) < 15) return 'text-amber-600';
     return 'text-red-600';
+  };
+
+  /** Drift text color using configured thresholds when available (overview table). */
+  const getDriftColorForMetric = (drift: number | undefined, metricName: string) => {
+    if (drift === undefined || drift === null) return 'text-slate-500';
+    const t = thresholdForMetric(metricName);
+    if (!t?.enabled) return getDriftColor(drift);
+    const mag = badDriftMagnitude(drift, t.direction);
+    if (mag === undefined) return 'text-emerald-600';
+    if (mag >= t.critical_threshold) return 'text-red-600';
+    if (mag >= t.warning_threshold) return 'text-amber-600';
+    return 'text-emerald-600';
   };
 
   const getDefaultMetrics = () => {
@@ -555,23 +649,39 @@ export default function PerformanceMonitorPanel({ modelId, modelType, modelMetri
                             <td className="px-4 py-3 text-sm text-right font-medium text-slate-800">
                               {current?.toFixed(4) ?? '—'}
                             </td>
-                            <td className={`px-4 py-3 text-sm text-right font-medium ${getDriftColor(displayDrift)}`}>
+                            <td className={`px-4 py-3 text-sm text-right font-medium ${getDriftColorForMetric(displayDrift, metricName)}`}>
                               {formatDrift(displayDrift)}
                             </td>
                             <td className="px-4 py-3 text-center">
-                              {displayDrift !== undefined && Math.abs(displayDrift) >= 10 ? (
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                                  Drifted
-                                </span>
-                              ) : displayDrift !== undefined && Math.abs(displayDrift) >= 5 ? (
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
-                                  Warning
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
-                                  Stable
-                                </span>
-                              )}
+                              {(() => {
+                                const sev = driftSeverityFromThresholds(displayDrift, metricName);
+                                if (sev === 'unknown') {
+                                  return (
+                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
+                                      —
+                                    </span>
+                                  );
+                                }
+                                if (sev === 'critical') {
+                                  return (
+                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                      Critical
+                                    </span>
+                                  );
+                                }
+                                if (sev === 'warning') {
+                                  return (
+                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                                      Warning
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
+                                    Stable
+                                  </span>
+                                );
+                              })()}
                             </td>
                           </tr>
                         );
@@ -869,6 +979,9 @@ export default function PerformanceMonitorPanel({ modelId, modelType, modelMetri
 
         {activeTab === 'thresholds' && (
           <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+            <p className="px-4 py-3 text-sm text-slate-600 border-b border-slate-200 bg-slate-50/80">
+              Warning and critical values are absolute drift percentages vs baseline. Edit per metric; changes apply to new evaluations and alerts.
+            </p>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -888,47 +1001,113 @@ export default function PerformanceMonitorPanel({ modelId, modelType, modelMetri
                     <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider">
                       Status
                     </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {thresholds.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                      <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
                         No thresholds configured. They will be created automatically when you set a baseline.
                       </td>
                     </tr>
                   ) : (
-                    thresholds.map((threshold) => (
-                      <tr key={threshold.id} className="hover:bg-slate-50">
-                        <td className="px-4 py-3 text-sm font-medium text-slate-700">
-                          {threshold.metric_name.replace(/_/g, ' ').toUpperCase()}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-center">
-                          <span className="px-2 py-1 bg-amber-100 text-amber-700 rounded">
-                            {threshold.warning_threshold}%
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-center">
-                          <span className="px-2 py-1 bg-red-100 text-red-700 rounded">
-                            {threshold.critical_threshold}%
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-center text-slate-600">
-                          {threshold.direction === 'lower' ? '↓ Lower is bad' : '↑ Higher is bad'}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-center">
-                          {threshold.enabled ? (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
-                              Active
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
-                              Disabled
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))
+                    thresholds.map((threshold) => {
+                      const isEditing = thresholdEditMetric === threshold.metric_name;
+                      return (
+                        <tr key={threshold.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-3 text-sm font-medium text-slate-700">
+                            {threshold.metric_name.replace(/_/g, ' ').toUpperCase()}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-center">
+                            {isEditing ? (
+                              <div className="flex items-center justify-center gap-1">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={0.1}
+                                  value={editWarningPct}
+                                  onChange={(e) => setEditWarningPct(e.target.value)}
+                                  className="w-20 px-2 py-1 border border-slate-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                  aria-label="Warning threshold percent"
+                                />
+                                <span className="text-slate-500">%</span>
+                              </div>
+                            ) : (
+                              <span className="px-2 py-1 bg-amber-100 text-amber-700 rounded">
+                                {threshold.warning_threshold}%
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-center">
+                            {isEditing ? (
+                              <div className="flex items-center justify-center gap-1">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={0.1}
+                                  value={editCriticalPct}
+                                  onChange={(e) => setEditCriticalPct(e.target.value)}
+                                  className="w-20 px-2 py-1 border border-slate-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"
+                                  aria-label="Critical threshold percent"
+                                />
+                                <span className="text-slate-500">%</span>
+                              </div>
+                            ) : (
+                              <span className="px-2 py-1 bg-red-100 text-red-700 rounded">
+                                {threshold.critical_threshold}%
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-center text-slate-600">
+                            {threshold.direction === 'lower' ? '↓ Lower is bad' : '↑ Higher is bad'}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-center">
+                            {threshold.enabled ? (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
+                                Active
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
+                                Disabled
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-right whitespace-nowrap">
+                            {isEditing ? (
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={cancelEditThreshold}
+                                  disabled={savingThreshold}
+                                  className="px-2 py-1 text-xs font-medium text-slate-600 bg-slate-100 rounded hover:bg-slate-200 disabled:opacity-50"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => saveThresholdEdits(threshold.metric_name)}
+                                  disabled={savingThreshold}
+                                  className="px-2 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                  {savingThreshold ? 'Saving…' : 'Save'}
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => startEditThreshold(threshold)}
+                                className="px-2 py-1 text-xs font-medium text-blue-700 bg-blue-50 rounded hover:bg-blue-100"
+                              >
+                                Edit thresholds
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
