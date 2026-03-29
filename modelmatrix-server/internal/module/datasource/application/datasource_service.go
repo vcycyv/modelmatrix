@@ -261,30 +261,31 @@ func (s *DatasourceServiceImpl) Update(id string, req *dto.UpdateDatasourceReque
 		return nil, err
 	}
 
-	// Apply updates
+	// Check name uniqueness if name changed (use original name to filter self out)
 	if req.Name != nil {
-		datasource.Name = *req.Name
-	}
-	if req.Description != nil {
-		datasource.Description = *req.Description
-	}
-
-	// Check name uniqueness if name changed
-	if req.Name != nil {
+		originalName := datasource.Name
 		existingNames, err := s.datasourceRepo.GetNamesInCollection(datasource.CollectionID)
 		if err != nil {
 			return nil, err
 		}
-		// Filter out current datasource's name
+		// Filter out this datasource's original name so we don't conflict with ourselves
 		var filteredNames []string
 		for _, name := range existingNames {
-			if name != datasource.Name {
+			if name != originalName {
 				filteredNames = append(filteredNames, name)
 			}
 		}
 		if err := s.domainService.ValidateDatasourceNameUnique(*req.Name, filteredNames); err != nil {
 			return nil, err
 		}
+	}
+
+	// Apply updates
+	if req.Name != nil {
+		datasource.Name = *req.Name
+	}
+	if req.Description != nil {
+		datasource.Description = *req.Description
 	}
 
 	// Update via repository

@@ -2,7 +2,6 @@ package integration
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,7 +12,6 @@ import (
 // ModelVersionsTestSuite tests model version and retrain APIs
 type ModelVersionsTestSuite struct {
 	suite.Suite
-	server    *httptest.Server
 	client    *http.Client
 	baseURL   string
 	authToken string
@@ -21,18 +19,14 @@ type ModelVersionsTestSuite struct {
 }
 
 func (s *ModelVersionsTestSuite) SetupSuite() {
-	s.server = setupTestServer(s.T())
-	s.client = &http.Client{}
-	s.baseURL = s.server.URL
+	s.client = newAPIClient()
+	s.baseURL = testServerURL
 	s.authToken = authenticate(s.T(), s.client, s.baseURL, "michael.jordan", "111222333")
 	s.modelID = s.createModelViaBuildCallback(s.T())
 }
 
 func (s *ModelVersionsTestSuite) TearDownSuite() {
-	if s.server != nil {
-		s.server.Close()
-	}
-	cleanupTestDB(s.T())
+	truncateAllTables(s.T())
 }
 
 // createModelViaBuildCallback creates a build, starts it, then sends a fake callback to create a model

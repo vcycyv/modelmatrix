@@ -2,7 +2,6 @@ package integration
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,7 +12,6 @@ import (
 // CollectionsTestSuite is a test suite for collection endpoints
 type CollectionsTestSuite struct {
 	suite.Suite
-	server    *httptest.Server
 	client    *http.Client
 	baseURL   string
 	authToken string
@@ -21,20 +19,14 @@ type CollectionsTestSuite struct {
 
 // SetupSuite runs once before all tests
 func (s *CollectionsTestSuite) SetupSuite() {
-	s.server = setupTestServer(s.T())
-	s.client = &http.Client{}
-	s.baseURL = s.server.URL
-
-	// Authenticate as a test user (adjust credentials for your test LDAP)
+	s.client = newAPIClient()
+	s.baseURL = testServerURL
 	s.authToken = authenticate(s.T(), s.client, s.baseURL, "michael.jordan", "111222333")
 }
 
 // TearDownSuite runs once after all tests
 func (s *CollectionsTestSuite) TearDownSuite() {
-	if s.server != nil {
-		s.server.Close()
-	}
-	cleanupTestDB(s.T())
+	truncateAllTables(s.T())
 }
 
 // SetupTest runs before each test

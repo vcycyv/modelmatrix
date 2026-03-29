@@ -8,236 +8,43 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
+	"time"
 
-	"modelmatrix-server/internal/infrastructure/auth"
-	"modelmatrix-server/internal/infrastructure/db"
-	"modelmatrix-server/internal/infrastructure/dbconnector"
-	"modelmatrix-server/internal/infrastructure/fileservice"
-	infraldap "modelmatrix-server/internal/infrastructure/ldap"
-	"modelmatrix-server/migrations"
-
-	"github.com/joho/godotenv"
-
-	// Datasource module
-	dsApi "modelmatrix-server/internal/module/datasource/api"
-	dsApp "modelmatrix-server/internal/module/datasource/application"
-	dsDomain "modelmatrix-server/internal/module/datasource/domain"
-	dsRepo "modelmatrix-server/internal/module/datasource/repository"
-
-	// Model Build module
-	buildApi "modelmatrix-server/internal/module/build/api"
-	buildApp "modelmatrix-server/internal/module/build/application"
-	buildDomain "modelmatrix-server/internal/module/build/domain"
-	buildRepo "modelmatrix-server/internal/module/build/repository"
-
-	"modelmatrix-server/internal/infrastructure/compute"
-
-	// Model Manage module
-	invApi "modelmatrix-server/internal/module/inventory/api"
-	invApp "modelmatrix-server/internal/module/inventory/application"
-	invDomain "modelmatrix-server/internal/module/inventory/domain"
-	invRepo "modelmatrix-server/internal/module/inventory/repository"
-
-	// Folder module
-	folderApp "modelmatrix-server/internal/module/folder/application"
-	folderRepo "modelmatrix-server/internal/module/folder/repository"
-
+	buildModel "modelmatrix-server/internal/module/build/model"
 	"modelmatrix-server/pkg/config"
-	"modelmatrix-server/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
+// Package-level state shared by all suites within the integration package.
+// Initialized by TestMain in main_test.go.
 var (
-	testDB     *gorm.DB
-	testRouter *gin.Engine
-	testConfig *config.Config
+	testDB        *gorm.DB
+	testRouter    *gin.Engine   //nolint:unused
+	testConfig    *config.Config //nolint:unused
+	testServerURL string
+	testServer    *httptest.Server //nolint:unused
 )
 
-// setupTestServer creates a test HTTP server with all routes configured
-func setupTestServer(t *testing.T) *httptest.Server {
-	// Load test configuration
-	cfg := loadTestConfig()
-
-	// Set the global config so db.Init() can access it
-	config.SetConfig(cfg)
-	testConfig = cfg
-
-	// Initialize logger
-	err := logger.Init(cfg.Logging.Level, cfg.Logging.Format, "stdout", "")
-	require.NoError(t, err, "Failed to initialize logger")
-
-	// Initialize database
-	database, err := db.Init(&cfg.Database)
-	require.NoError(t, err, "Failed to connect to test database")
-	testDB = database
-
-	// Run migrations
-	err = migrations.Migrate(database)
-	require.NoError(t, err, "Failed to run migrations")
-
-	// Create indexes
-	err = migrations.CreateIndexes(database)
-	if err != nil {
-		t.Logf("Warning: Failed to create some indexes: %v", err)
+// computeAvailable returns true if TEST_COMPUTE_URL is set and reachable.
+func computeAvailable() bool {
+	url := os.Getenv("TEST_COMPUTE_URL")
+	if url == "" {
+		return false
 	}
-
-	// Initialize LDAP client
-	ldapClient, err := infraldap.NewClient(&cfg.LDAP)
-	require.NoError(t, err, "Failed to initialize LDAP client")
-
-	// Initialize file service
-	fileService, err := fileservice.NewFileService(&cfg.FileService)
-	require.NoError(t, err, "Failed to initialize file service")
-
-	// Initialize JWT token service
-	tokenService := auth.NewTokenService(&cfg.JWT)
-
-	// Initialize Gin router
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(gin.Recovery())
-
-	// API routes
-	api := router.Group("/api")
-
-	// Auth middleware
-	authMiddleware := auth.Middleware(tokenService)
-
-	// ===== Dependency Injection =====
-
-	// --- Datasource Module ---
-	dsDomainService := dsDomain.NewService()
-	collectionRepo := dsRepo.NewCollectionRepository(database)
-	datasourceRepo := dsRepo.NewDatasourceRepository(database)
-	columnRepo := dsRepo.NewColumnRepository(database)
-	externalDBConnector := dbconnector.NewExternalDBConnector()
-
-	collectionService := dsApp.NewCollectionService(collectionRepo, datasourceRepo, dsDomainService, fileService)
-	datasourceService := dsApp.NewDatasourceService(database, datasourceRepo, collectionRepo, columnRepo, dsDomainService, fileService, externalDBConnector)
-	columnService := dsApp.NewColumnService(database, columnRepo, datasourceRepo, dsDomainService)
-
-	authController := dsApi.NewAuthController(ldapClient, tokenService)
-	collectionController := dsApi.NewCollectionController(collectionService)
-	datasourceController := dsApi.NewDatasourceController(datasourceService, columnService)
-
-	// Register datasource routes
-	authController.RegisterRoutes(api)
-	collectionController.RegisterRoutes(api, authMiddleware)
-	datasourceController.RegisterRoutes(api, authMiddleware)
-
-	// --- Model Manage Module (initialize first, needed by Build) ---
-	invDomainService := invDomain.NewService()
-	modelRepo := invRepo.NewModelRepository(database)
-	modelService := invApp.NewModelService(modelRepo, invDomainService, fileService)
-
-	// --- Model Version Module ---
-	versionRepo := invRepo.NewModelVersionRepository(database)
-	versionService := invApp.NewModelVersionService(modelRepo, versionRepo, fileService.(fileservice.VersionStore))
-	versionController := invApi.NewVersionController(versionService)
-
-	// --- Folder Module (needed by build service) ---
-	folderRepoImpl := folderRepo.NewFolderRepository(database)
-	projectRepoImpl := folderRepo.NewProjectRepository(database)
-	folderSvc := folderApp.NewFolderService(database, folderRepoImpl, projectRepoImpl)
-
-	// --- Model Build Module ---
-	buildDomainService := buildDomain.NewService()
-	buildRepo := buildRepo.NewBuildRepository(database)
-	computeClient := &mockComputeClient{} // Mock client for integration tests
-	performanceService := invApp.NewPerformanceService(invRepo.NewPerformanceRepository(database), modelRepo)
-	buildService := buildApp.NewBuildService(buildRepo, buildDomainService, computeClient, datasourceService, modelService, versionService, folderSvc, performanceService, cfg)
-	buildController := buildApi.NewBuildController(buildService)
-
-	// Register version routes
-	versionController.RegisterRoutes(api, authMiddleware)
-
-	// Model routes (with retrain)
-	modelControllerWithRetrain := invApi.NewModelControllerWithRetrain(modelService, buildService)
-	modelControllerWithRetrain.RegisterRoutes(api, authMiddleware)
-
-	// Register model build routes
-	buildController.RegisterRoutes(api, authMiddleware)
-
-	testRouter = router
-	testConfig = cfg
-
-	return httptest.NewServer(router)
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(url + "/compute/health")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return false
+	}
+	resp.Body.Close()
+	return true
 }
 
-// loadTestConfig loads test configuration from environment variables
-// It first tries to load .env.test file, then falls back to environment variables
-func loadTestConfig() *config.Config {
-	// Try to load .env.test file (ignore error if file doesn't exist)
-	// Try multiple possible paths relative to common working directories
-	possiblePaths := []string{
-		filepath.Join("tests", "integration", ".env.test"), // From project root
-		filepath.Join("integration", ".env.test"),          // From tests/ directory
-		".env.test", // From tests/integration/ directory
-		filepath.Join("..", "..", "tests", "integration", ".env.test"), // From deeper directories
-	}
-
-	for _, envPath := range possiblePaths {
-		if _, err := os.Stat(envPath); err == nil {
-			_ = godotenv.Load(envPath)
-			break
-		}
-	}
-
-	dbPort, _ := strconv.Atoi(getEnv("TEST_DB_PORT", "5432"))
-	ldapPort, _ := strconv.Atoi(getEnv("TEST_LDAP_PORT", "3890"))
-
-	cfg := &config.Config{
-		Env: "test",
-		Server: config.ServerConfig{
-			Host: "localhost",
-			Port: 8080,
-		},
-		Database: config.DatabaseConfig{
-			Host:         getEnv("TEST_DB_HOST", "localhost"),
-			Port:         dbPort,
-			Username:     getEnv("TEST_DB_USER", "postgres"),
-			Password:     getEnv("TEST_DB_PASSWORD", "dayang"),
-			DBName:       getEnv("TEST_DB_NAME", "modelmatrixtest"),
-			SSLMode:      "disable",
-			MaxIdleConns: 10,
-			MaxOpenConns: 100,
-		},
-		LDAP: config.LDAPConfig{
-			Host:         getEnv("TEST_LDAP_HOST", "localhost"),
-			Port:         ldapPort,
-			BaseDN:       getEnv("TEST_LDAP_BASE_DN", "dc=example,dc=org"),
-			BindDN:       getEnv("TEST_LDAP_BIND_DN", "cn=admin,dc=example,dc=org"),
-			BindPassword: getEnv("TEST_LDAP_BIND_PASSWORD", "admin"),
-			UserFilter:   "(uid=%s)",
-			GroupFilter:  "(|(member=%s)(uniqueMember=%s))",
-			UseTLS:       false,
-		},
-		FileService: config.FileServiceConfig{
-			MinioEndpoint:  getEnv("TEST_MINIO_ENDPOINT", "localhost:9000"),
-			MinioAccessKey: getEnv("TEST_MINIO_ACCESS_KEY", "minioadmin"),
-			MinioSecretKey: getEnv("TEST_MINIO_SECRET_KEY", "minioadmin123"),
-			MinioUseSSL:    false,
-			MinioBucket:    getEnv("TEST_MINIO_BUCKET", "modelmatrixtest"),
-		},
-		JWT: config.JWTConfig{
-			Secret:          getEnv("TEST_JWT_SECRET", "test-secret-key-change-in-production"),
-			ExpirationHours: 24,
-		},
-		Logging: config.LoggingConfig{
-			Level:    getEnv("TEST_LOG_LEVEL", "info"),
-			Format:   "json",
-			Output:   "stdout",
-			FilePath: "",
-		},
-	}
-	return cfg
-}
-
+// getEnv returns the value of an environment variable or a default.
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -245,59 +52,30 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// cleanupTestDB cleans up test data (drops all tables or truncates)
-func cleanupTestDB(t *testing.T) {
-	if testDB == nil {
-		return
-	}
-
-	// Option 1: Drop all tables (fresh start)
-	// This is slower but ensures complete isolation
-	err := testDB.Exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public;").Error
-	if err != nil {
-		t.Logf("Warning: Failed to drop schema: %v", err)
-	}
-
-	// Re-run migrations
-	err = migrations.Migrate(testDB)
-	require.NoError(t, err, "Failed to re-run migrations after cleanup")
-
-	// Re-create indexes
-	err = migrations.CreateIndexes(testDB)
-	if err != nil {
-		t.Logf("Warning: Failed to re-create indexes: %v", err)
-	}
-}
-
-// authenticate performs login and returns JWT token
+// authenticate performs a real LDAP-backed login and returns the JWT token.
 func authenticate(t *testing.T, client *http.Client, baseURL, username, password string) string {
-	loginReq := map[string]string{
-		"username": username,
-		"password": password,
-	}
-	body, _ := json.Marshal(loginReq)
-
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
 	resp, err := client.Post(baseURL+"/api/auth/login", "application/json", bytes.NewBuffer(body))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var result struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
+		Code int `json:"code"`
 		Data struct {
 			Token string `json:"token"`
 		} `json:"data"`
 	}
-	err = json.NewDecoder(resp.Body).Decode(&result)
-	require.NoError(t, err)
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	resp.Body.Close()
 	require.Equal(t, 200, result.Code)
 	require.NotEmpty(t, result.Data.Token)
-
 	return result.Data.Token
 }
 
-// makeRequest is a helper to make authenticated HTTP requests
+// makeRequest is a helper to make authenticated HTTP requests.
 func makeRequest(t *testing.T, client *http.Client, method, url, token string, body interface{}) *http.Response {
+	t.Helper()
 	var req *http.Request
 	var err error
 
@@ -320,122 +98,156 @@ func makeRequest(t *testing.T, client *http.Client, method, url, token string, b
 	return resp
 }
 
-// parseResponse parses JSON response into a struct
-func parseResponse(t *testing.T, resp *http.Response, result interface{}) {
-	defer resp.Body.Close()
-	err := json.NewDecoder(resp.Body).Decode(result)
-	require.NoError(t, err, "Failed to parse response")
-}
-
-// requireSuccess asserts that response has code 200
-func requireSuccess(t *testing.T, resp *http.Response) {
-	require.Equal(t, http.StatusOK, resp.StatusCode, "Expected 200 OK")
-}
-
-// requireNoContent asserts that response has code 204
-func requireNoContent(t *testing.T, resp *http.Response) {
-	require.Equal(t, http.StatusNoContent, resp.StatusCode, "Expected 204 No Content")
-}
-
-// requireCreated asserts that response has code 201
-func requireCreated(t *testing.T, resp *http.Response) {
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "Expected 201 Created")
-}
-
-// requireBadRequest asserts that response has code 400
-func requireBadRequest(t *testing.T, resp *http.Response) {
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode, "Expected 400 Bad Request")
-}
-
-// requireUnauthorized asserts that response has code 401
-func requireUnauthorized(t *testing.T, resp *http.Response) {
-	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "Expected 401 Unauthorized")
-}
-
-// requireForbidden asserts that response has code 403
-func requireForbidden(t *testing.T, resp *http.Response) {
-	require.Equal(t, http.StatusForbidden, resp.StatusCode, "Expected 403 Forbidden")
-}
-
-// requireNotFound asserts that response has code 404
-func requireNotFound(t *testing.T, resp *http.Response) {
-	require.Equal(t, http.StatusNotFound, resp.StatusCode, "Expected 404 Not Found")
-}
-
-// makeMultipartRequest is a helper to make authenticated multipart/form-data requests
+// makeMultipartRequest makes an authenticated multipart/form-data request.
 func makeMultipartRequest(t *testing.T, client *http.Client, method, url, token string, formData map[string]string, fileField, filePath string) *http.Response {
-	// Read the file
+	t.Helper()
 	fileData, err := os.ReadFile(filePath)
 	require.NoError(t, err, "Failed to read file: %s", filePath)
 
-	// Create multipart form
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-
-	// Add form fields
 	for key, value := range formData {
-		err := writer.WriteField(key, value)
-		require.NoError(t, err, "Failed to write form field: %s", key)
+		require.NoError(t, writer.WriteField(key, value))
 	}
-
-	// Add file
 	part, err := writer.CreateFormFile(fileField, filepath.Base(filePath))
-	require.NoError(t, err, "Failed to create form file")
+	require.NoError(t, err)
 	_, err = part.Write(fileData)
-	require.NoError(t, err, "Failed to write file data")
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
 
-	err = writer.Close()
-	require.NoError(t, err, "Failed to close multipart writer")
-
-	// Create request
 	req, err := http.NewRequest(method, url, &body)
-	require.NoError(t, err, "Failed to create request")
+	require.NoError(t, err)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := client.Do(req)
-	require.NoError(t, err, "Failed to execute request")
+	require.NoError(t, err)
 	return resp
 }
 
-// mockComputeClient is a mock implementation of compute.Client for integration tests
-type mockComputeClient struct{}
-
-func (m *mockComputeClient) TrainModel(req *compute.TrainRequest) (*compute.TrainResponse, error) {
-	return &compute.TrainResponse{
-		JobID:   "mock-job-id",
-		Status:  "accepted",
-		Message: "Training job accepted (mock)",
-	}, nil
+// parseResponse decodes JSON response body into result.
+func parseResponse(t *testing.T, resp *http.Response, result interface{}) {
+	t.Helper()
+	defer resp.Body.Close()
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(result), "Failed to parse response")
 }
 
-func (m *mockComputeClient) GetStatus(jobID string) (*compute.JobStatusResponse, error) {
-	return &compute.JobStatusResponse{
-		JobID:    jobID,
-		Status:   "completed",
-		Progress: 100,
-	}, nil
+// HTTP status assertion helpers
+func requireSuccess(t *testing.T, resp *http.Response) {
+	t.Helper()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "Expected 200 OK")
+}
+func requireNoContent(t *testing.T, resp *http.Response) {
+	t.Helper()
+	require.Equal(t, http.StatusNoContent, resp.StatusCode, "Expected 204 No Content")
+}
+func requireCreated(t *testing.T, resp *http.Response) {
+	t.Helper()
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "Expected 201 Created")
+}
+func requireBadRequest(t *testing.T, resp *http.Response) {
+	t.Helper()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode, "Expected 400 Bad Request")
+}
+func requireUnauthorized(t *testing.T, resp *http.Response) {
+	t.Helper()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "Expected 401 Unauthorized")
+}
+func requireNotFound(t *testing.T, resp *http.Response) {
+	t.Helper()
+	require.Equal(t, http.StatusNotFound, resp.StatusCode, "Expected 404 Not Found")
 }
 
-func (m *mockComputeClient) HealthCheck() error {
-	return nil
+// truncateAllTables removes all data from all application tables.
+// This is ~50× faster than DROP SCHEMA CASCADE + re-migrate.
+func truncateAllTables(t *testing.T) {
+	t.Helper()
+	if testDB == nil {
+		return
+	}
+	err := testDB.Exec(`TRUNCATE TABLE
+		performance_evaluations,
+		performance_alerts,
+		performance_records,
+		performance_baselines,
+		performance_thresholds,
+		performance_threshold_defaults,
+		model_version_files,
+		model_version_variables,
+		model_versions,
+		model_files,
+		model_variables,
+		models,
+		model_builds,
+		datasource_columns,
+		datasources,
+		collections,
+		projects,
+		folders
+		CASCADE`).Error
+	if err != nil {
+		t.Logf("Warning: truncate failed (first run or empty): %v", err)
+	}
 }
 
-func (m *mockComputeClient) ScoreModel(req *compute.ScoreRequest) (*compute.ScoreResponse, error) {
-	return &compute.ScoreResponse{
-		JobID:   "mock-score-job-id",
-		Status:  "accepted",
-		Message: "Scoring job accepted (mock)",
-	}, nil
+// waitForBuildStatus polls the database until the build reaches the expected status or times out.
+// Use this for tests that trigger real async compute jobs.
+func waitForBuildStatus(t *testing.T, buildID string, expectedStatus string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		var build buildModel.ModelBuildModel
+		if err := testDB.First(&build, "id = ?", buildID).Error; err == nil {
+			if build.Status == expectedStatus {
+				return
+			}
+			if build.Status == "failed" || build.Status == "cancelled" {
+				t.Fatalf("build %s reached terminal status %q while waiting for %q; error: %s",
+					buildID, build.Status, expectedStatus, build.ErrorMessage)
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("build %s did not reach status %q within %s", buildID, expectedStatus, timeout)
 }
 
-func (m *mockComputeClient) EvaluatePerformance(req *compute.EvaluateRequest) (*compute.EvaluateResponse, error) {
-	return &compute.EvaluateResponse{
-		JobID:   "mock-evaluate-job-id",
-		Status:  "accepted",
-		Message: "Evaluation job accepted (mock)",
-	}, nil
+// getFixturePath returns the absolute path to a file in tests/testdata/.
+func getFixturePath(filename string) string {
+	possiblePaths := []string{
+		filepath.Join("tests", "testdata", filename),
+		filepath.Join("testdata", filename),
+		filepath.Join("..", "testdata", filename),
+		filepath.Join("..", "..", "tests", "testdata", filename),
+	}
+	for _, p := range possiblePaths {
+		if _, err := os.Stat(p); err == nil {
+			abs, err := filepath.Abs(p)
+			if err == nil {
+				return abs
+			}
+			return p
+		}
+	}
+	return filepath.Join("tests", "testdata", filename)
+}
+
+// skipIfNoCompute skips the test if the compute service is not available.
+func skipIfNoCompute(t *testing.T) {
+	t.Helper()
+	if !computeAvailable() {
+		t.Skip("compute service not available; set TEST_COMPUTE_URL to enable")
+	}
+}
+
+// dbInsert is a helper to directly insert a GORM model into the test database.
+func dbInsert(t *testing.T, value interface{}) {
+	t.Helper()
+	require.NoError(t, testDB.Create(value).Error)
+}
+
+// newAPIClient returns a fresh http.Client for tests.
+func newAPIClient() *http.Client {
+	return &http.Client{Timeout: 30 * time.Second}
 }

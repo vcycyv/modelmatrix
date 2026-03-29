@@ -1,4 +1,4 @@
-.PHONY: build run test test-integration test-integration-coverage clean migrate swagger docker-build docker-run
+.PHONY: build run test test-unit test-integration test-integration-coverage test-frontend test-e2e clean migrate swagger docker-build docker-run
 
 # Build the application
 build:
@@ -17,18 +17,39 @@ migrate:
 migrate-fresh:
 	go run cmd/migrate/main.go -drop
 
-# Run tests
+# Run all Go tests (unit)
 test:
-	go test -v ./...
+	go test -v ./internal/...
+
+# Run Go unit tests only (fast, no Docker) — domain, application, and controller layers
+test-unit:
+	go test -v \
+	  ./internal/module/inventory/domain/... \
+	  ./internal/module/inventory/application/... \
+	  ./internal/module/inventory/api/... \
+	  ./internal/module/build/domain/... \
+	  ./internal/module/build/application/... \
+	  ./internal/module/build/api/... \
+	  ./internal/module/datasource/domain/... \
+	  ./internal/module/datasource/application/... \
+	  ./internal/module/datasource/api/...
 
 # Run tests with coverage
 test-coverage:
-	go test -v -coverprofile=coverage.out ./...
+	go test -v -coverprofile=coverage.out ./internal/...
 	go tool cover -html=coverage.out -o coverage.html
 
-# Run integration tests
+# Run integration tests (starts containers automatically via testcontainers)
 test-integration:
-	go test -v ./tests/integration/...
+	go test -v -timeout 300s ./tests/integration/...
+
+# Run frontend unit tests
+test-frontend:
+	cd web && npm run test
+
+# Run E2E tests (requires running app + E2E_BASE_URL)
+test-e2e:
+	cd web && npm run test:e2e
 
 # Run integration tests with coverage
 test-integration-coverage:

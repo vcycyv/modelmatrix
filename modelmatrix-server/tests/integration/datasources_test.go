@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"mime/multipart"
 	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,7 +14,6 @@ import (
 // DatasourcesTestSuite is a test suite for datasource endpoints
 type DatasourcesTestSuite struct {
 	suite.Suite
-	server    *httptest.Server
 	client    *http.Client
 	baseURL   string
 	authToken string
@@ -25,20 +21,14 @@ type DatasourcesTestSuite struct {
 
 // SetupSuite runs once before all tests
 func (s *DatasourcesTestSuite) SetupSuite() {
-	s.server = setupTestServer(s.T())
-	s.client = &http.Client{}
-	s.baseURL = s.server.URL
-
-	// Authenticate as a test user (adjust credentials for your test LDAP)
+	s.client = newAPIClient()
+	s.baseURL = testServerURL
 	s.authToken = authenticate(s.T(), s.client, s.baseURL, "michael.jordan", "111222333")
 }
 
 // TearDownSuite runs once after all tests
 func (s *DatasourcesTestSuite) TearDownSuite() {
-	if s.server != nil {
-		s.server.Close()
-	}
-	cleanupTestDB(s.T())
+	truncateAllTables(s.T())
 }
 
 // SetupTest runs before each test
@@ -74,32 +64,10 @@ func (s *DatasourcesTestSuite) createTestCollection(name, description string) st
 	return result.Data.ID
 }
 
-// getFixturePath returns the absolute path to a testdata file
-// Uses Go's standard testdata convention
-func getFixturePath(filename string) string {
-	// Try multiple possible paths relative to common working directories
-	possiblePaths := []string{
-		filepath.Join("tests", "testdata", filename),           // From project root (Go convention)
-		filepath.Join("testdata", filename),                    // From tests/ directory
-		filepath.Join("..", "testdata", filename),              // From tests/integration/ directory
-		filepath.Join("..", "..", "tests", "testdata", filename), // From deeper directories
-		// Legacy support for fixtures directory
-		filepath.Join("tests", "fixtures", filename),
-		filepath.Join("fixtures", filename),
-	}
-
-	for _, path := range possiblePaths {
-		if _, err := os.Stat(path); err == nil {
-			absPath, err := filepath.Abs(path)
-			if err == nil {
-				return absPath
-			}
-			return path
-		}
-	}
-
-	// If not found, return the most likely path and let the test fail with a clear error
-	return filepath.Join("tests", "testdata", filename)
+// getFixturePathForDatasource is a local alias for testing - use getFixturePath from setup.go
+// Kept for backward compatibility with this file
+func getFixturePathForDatasource(filename string) string {
+	return getFixturePath(filename)
 }
 
 // TestCreateDatasourceWithCSVFile tests POST /api/datasources with multipart/form-data (CSV file)

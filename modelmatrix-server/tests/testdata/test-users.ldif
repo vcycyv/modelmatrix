@@ -1,0 +1,51 @@
+# Organizational Units
+dn: ou=users,dc=example,dc=org
+objectClass: organizationalUnit
+ou: users
+
+dn: ou=groups,dc=example,dc=org
+objectClass: organizationalUnit
+ou: groups
+
+# Admin group
+dn: cn=modelmatrix_admin,ou=groups,dc=example,dc=org
+objectClass: groupOfNames
+cn: modelmatrix_admin
+member: uid=michael.jordan,ou=users,dc=example,dc=org
+
+# Editor group
+dn: cn=modelmatrix_editor,ou=groups,dc=example,dc=org
+objectClass: groupOfNames
+cn: modelmatrix_editor
+member: uid=jane.doe,ou=users,dc=example,dc=org
+
+# Viewer group
+dn: cn=modelmatrix_viewer,ou=groups,dc=example,dc=org
+objectClass: groupOfNames
+cn: modelmatrix_viewer
+member: uid=viewer.user,ou=users,dc=example,dc=org
+
+# Test users
+dn: uid=michael.jordan,ou=users,dc=example,dc=org
+objectClass: inetOrgPerson
+uid: michael.jordan
+cn: Michael Jordan
+sn: Jordan
+mail: michael.jordan@example.org
+userPassword: 111222333
+
+dn: uid=jane.doe,ou=users,dc=example,dc=org
+objectClass: inetOrgPerson
+uid: jane.doe
+cn: Jane Doe
+sn: Doe
+mail: jane.doe@example.org
+userPassword: password123
+
+dn: uid=viewer.user,ou=users,dc=example,dc=org
+objectClass: inetOrgPerson
+uid: viewer.user
+cn: Viewer User
+sn: User
+mail: viewer.user@example.org
+userPassword: viewerpass

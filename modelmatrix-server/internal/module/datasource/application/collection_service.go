@@ -75,6 +75,24 @@ func (s *CollectionServiceImpl) Update(id string, req *dto.UpdateCollectionReque
 		return nil, err
 	}
 
+	// Check name uniqueness before applying the update (use original name to exclude self)
+	if req.Name != nil {
+		originalName := collection.Name
+		existingNames, err := s.collectionRepo.GetAllNames()
+		if err != nil {
+			return nil, err
+		}
+		var filteredNames []string
+		for _, name := range existingNames {
+			if name != originalName {
+				filteredNames = append(filteredNames, name)
+			}
+		}
+		if err := s.domainService.ValidateCollectionNameUnique(*req.Name, filteredNames); err != nil {
+			return nil, err
+		}
+	}
+
 	// Apply updates
 	if req.Name != nil {
 		collection.Name = *req.Name
@@ -86,24 +104,6 @@ func (s *CollectionServiceImpl) Update(id string, req *dto.UpdateCollectionReque
 	// Validate using domain service
 	if err := s.domainService.ValidateCollection(collection); err != nil {
 		return nil, err
-	}
-
-	// Check name uniqueness if name changed
-	if req.Name != nil {
-		existingNames, err := s.collectionRepo.GetAllNames()
-		if err != nil {
-			return nil, err
-		}
-		// Filter out current collection's name
-		var filteredNames []string
-		for _, name := range existingNames {
-			if name != collection.Name {
-				filteredNames = append(filteredNames, name)
-			}
-		}
-		if err := s.domainService.ValidateCollectionNameUnique(*req.Name, filteredNames); err != nil {
-			return nil, err
-		}
 	}
 
 	// Update via repository
