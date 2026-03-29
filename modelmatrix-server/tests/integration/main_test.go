@@ -47,6 +47,8 @@ import (
 	folderRepo "modelmatrix-server/internal/module/folder/repository"
 
 	searchApi "modelmatrix-server/internal/module/search/api"
+	searchApp "modelmatrix-server/internal/module/search/application"
+	searchRepoPkg "modelmatrix-server/internal/module/search/repository"
 
 	"modelmatrix-server/pkg/config"
 	"modelmatrix-server/pkg/logger"
@@ -383,7 +385,9 @@ func buildTestRouter(ctx context.Context, cfg *config.Config, database *gorm.DB)
 	modelCtrl.RegisterRoutes(api, authMiddleware)
 
 	// --- Search ---
-	searchApi.NewSearchController(database).RegisterRoutes(api, authMiddleware)
+	searchRepository := searchRepoPkg.NewGormSearchRepository(database)
+	searchService := searchApp.NewSearchService(searchRepository)
+	searchApi.NewSearchController(searchService).RegisterRoutes(api, authMiddleware)
 
 	// --- Start HTTP server ---
 	// Bind to 0.0.0.0 so Docker containers can reach the callback endpoint.

@@ -38,6 +38,8 @@ import (
 
 	// Search module
 	searchApi "modelmatrix-server/internal/module/search/api"
+	searchApp "modelmatrix-server/internal/module/search/application"
+	searchRepo "modelmatrix-server/internal/module/search/repository"
 
 	"modelmatrix-server/pkg/config"
 	"modelmatrix-server/pkg/logger"
@@ -222,7 +224,9 @@ func main() {
 	folderController.RegisterRoutes(api, authMiddleware)
 
 	// --- Search ---
-	searchController := searchApi.NewSearchController(database)
+	searchRepository := searchRepo.NewGormSearchRepository(database)
+	searchService := searchApp.NewSearchService(searchRepository)
+	searchController := searchApi.NewSearchController(searchService)
 	searchController.RegisterRoutes(api, authMiddleware)
 
 	// Serve static files for the web UI
