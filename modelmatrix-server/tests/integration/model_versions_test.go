@@ -1,6 +1,8 @@
 package integration
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 
@@ -135,32 +137,33 @@ func (s *ModelVersionsTestSuite) createTestDatasource(t *testing.T, collectionID
 		} `json:"data"`
 	}
 	parseResponse(t, resp, &result)
+	ensureTrainingColumnRoles(t, s.client, s.baseURL, s.authToken, result.Data.ID)
 	return result.Data.ID
 }
 
-func (s *ModelVersionsTestSuite) TestCreateVersion() {
+// TestCreateVersion_WithoutUploadedArtifactsFails documents integration reality: build callbacks in these tests use
+// synthetic model paths (no bytes in MinIO). CreateVersion copies from storage and correctly returns 5xx until
+// artifacts exist — this is not masked as success. A future enhancement is to upload fixture bytes in tests and
+// then assert 201 + GET + restore.
+func (s *ModelVersionsTestSuite) TestCreateVersion_WithoutUploadedArtifactsFails() {
 	if s.modelID == "" {
 		s.T().Skip("no model from build callback")
 		return
 	}
-	resp := makeRequest(s.T(), s.client, "POST", s.baseURL+"/api/models/"+s.modelID+"/versions", s.authToken, nil)
-	defer resp.Body.Close()
-	// May 201 if version created; 500 if MinIO version store fails (e.g. in CI without MinIO)
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusInternalServerError {
-		assert.Equal(s.T(), http.StatusCreated, resp.StatusCode, "expected 201 or 500 if MinIO unavailable")
-		return
+	createResp := makeRequest(s.T(), s.client, "POST", s.baseURL+"/api/models/"+s.modelID+"/versions", s.authToken, nil)
+	defer createResp.Body.Close()
+	body, err := io.ReadAll(createResp.Body)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), http.StatusInternalServerError, createResp.StatusCode,
+		"expected 500 when model file keys are missing from object storage; body=%s", string(body))
+
+	var errPayload struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
 	}
-	if resp.StatusCode == http.StatusCreated {
-		var result struct {
-			Data struct {
-				ID            string `json:"id"`
-				VersionNumber int    `json:"version_number"`
-			} `json:"data"`
-		}
-		parseResponse(s.T(), resp, &result)
-		assert.NotEmpty(s.T(), result.Data.ID)
-		assert.Equal(s.T(), 1, result.Data.VersionNumber)
-	}
+	require.NoError(s.T(), json.Unmarshal(body, &errPayload))
+	assert.Equal(s.T(), 500, errPayload.Code)
+	assert.Contains(s.T(), errPayload.Msg, "version file")
 }
 
 func (s *ModelVersionsTestSuite) TestListVersions() {

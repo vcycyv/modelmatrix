@@ -147,6 +147,25 @@ func (s *FoldersProjectsTestSuite) TestGetRootFolders() {
 	assert.GreaterOrEqual(s.T(), len(result.Data), 1)
 }
 
+// TestGetFolder_OK verifies GET /api/folders/:id returns 200 with expected fields (not only 404-after-delete).
+func (s *FoldersProjectsTestSuite) TestGetFolder_OK() {
+	folderID := s.createFolder("Folder For GET")
+
+	resp := makeRequest(s.T(), s.client, "GET", s.baseURL+"/api/folders/"+folderID, s.authToken, nil)
+	defer resp.Body.Close()
+	requireSuccess(s.T(), resp)
+
+	var result struct {
+		Data struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	parseResponse(s.T(), resp, &result)
+	assert.Equal(s.T(), folderID, result.Data.ID)
+	assert.Equal(s.T(), "Folder For GET", result.Data.Name)
+}
+
 // --- Project tests ---
 
 func (s *FoldersProjectsTestSuite) TestCreateProject() {
@@ -164,6 +183,45 @@ func (s *FoldersProjectsTestSuite) TestCreateProject() {
 	parseResponse(s.T(), resp, &result)
 	assert.NotEmpty(s.T(), result.Data.ID)
 	assert.Equal(s.T(), "Root Project A", result.Data.Name)
+}
+
+// TestListAndGetProject verifies GET /api/projects and GET /api/projects/:id.
+func (s *FoldersProjectsTestSuite) TestListAndGetProject() {
+	projectID := s.createProject("Listed Project")
+
+	listResp := makeRequest(s.T(), s.client, "GET", s.baseURL+"/api/projects", s.authToken, nil)
+	defer listResp.Body.Close()
+	requireSuccess(s.T(), listResp)
+	var listResult struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	parseResponse(s.T(), listResp, &listResult)
+	require.NotEmpty(s.T(), listResult.Data)
+	found := false
+	for _, p := range listResult.Data {
+		if p.ID == projectID {
+			found = true
+			assert.Equal(s.T(), "Listed Project", p.Name)
+			break
+		}
+	}
+	require.True(s.T(), found, "created root project should appear in GET /api/projects")
+
+	getResp := makeRequest(s.T(), s.client, "GET", s.baseURL+"/api/projects/"+projectID, s.authToken, nil)
+	defer getResp.Body.Close()
+	requireSuccess(s.T(), getResp)
+	var getResult struct {
+		Data struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	parseResponse(s.T(), getResp, &getResult)
+	assert.Equal(s.T(), projectID, getResult.Data.ID)
+	assert.Equal(s.T(), "Listed Project", getResult.Data.Name)
 }
 
 func (s *FoldersProjectsTestSuite) TestCreateProjectInFolder() {

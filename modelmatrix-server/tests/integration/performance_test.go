@@ -37,7 +37,9 @@ func (s *PerformanceTestSuite) seedModelAndDatasource(t *testing.T) (dsID, model
 		map[string]string{"name": "Perf Suite Collection", "description": "for perf tests"})
 	requireCreated(t, colResp)
 	var colResult struct {
-		Data struct{ ID string `json:"id"` } `json:"data"`
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 	parseResponse(t, colResp, &colResult)
 
@@ -48,17 +50,22 @@ func (s *PerformanceTestSuite) seedModelAndDatasource(t *testing.T) (dsID, model
 		"file", fixturePath)
 	requireCreated(t, dsResp)
 	var dsResult struct {
-		Data struct{ ID string `json:"id"` } `json:"data"`
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 	parseResponse(t, dsResp, &dsResult)
 	dsID = dsResult.Data.ID
+	ensureTrainingColumnRoles(t, s.client, s.baseURL, s.authToken, dsID)
 
 	buildResp := makeRequest(t, s.client, "POST", s.baseURL+"/api/builds", s.authToken, map[string]interface{}{
 		"name": "Perf Suite Build", "datasource_id": dsID, "model_type": "regression", "algorithm": "random_forest",
 	})
 	requireCreated(t, buildResp)
 	var buildResult struct {
-		Data struct{ ID string `json:"id"` } `json:"data"`
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 	parseResponse(t, buildResp, &buildResult)
 	buildID := buildResult.Data.ID
@@ -70,9 +77,9 @@ func (s *PerformanceTestSuite) seedModelAndDatasource(t *testing.T) (dsID, model
 	modelPath := "models/rf/model.pkl"
 	cbResp := makeRequest(t, s.client, "POST", s.baseURL+"/api/builds/callback", "", map[string]interface{}{
 		"build_id": buildID, "job_id": "perf-mock-job", "status": "completed",
-		"model_path":  modelPath,
-		"metrics":     map[string]interface{}{"r2": 0.88, "rmse": 0.12},
-		"feature_names": []string{"LOAN", "MORTDUE"},
+		"model_path":          modelPath,
+		"metrics":             map[string]interface{}{"r2": 0.88, "rmse": 0.12},
+		"feature_names":       []string{"LOAN", "MORTDUE"},
 		"feature_importances": map[string]float64{"LOAN": 0.6, "MORTDUE": 0.4},
 	})
 	require.Equal(t, http.StatusOK, cbResp.StatusCode)
@@ -123,7 +130,7 @@ func (s *PerformanceTestSuite) TestCreateBaseline() {
 	}
 	resp := makeRequest(s.T(), s.client, "POST", s.baseURL+"/api/models/"+s.modelID+"/performance/baselines", s.authToken, req)
 	defer resp.Body.Close()
-	requireCreated(s.T(), resp)
+	requireSuccess(s.T(), resp)
 
 	var result struct {
 		Data struct {
@@ -147,7 +154,7 @@ func (s *PerformanceTestSuite) TestGetBaselines() {
 		"sample_count": 200,
 	}
 	seedResp := makeRequest(s.T(), s.client, "POST", s.baseURL+"/api/models/"+s.modelID+"/performance/baselines", s.authToken, seedReq)
-	requireCreated(s.T(), seedResp)
+	requireSuccess(s.T(), seedResp)
 	seedResp.Body.Close()
 
 	resp := makeRequest(s.T(), s.client, "GET", s.baseURL+"/api/models/"+s.modelID+"/performance/baselines", s.authToken, nil)
@@ -172,7 +179,7 @@ func (s *PerformanceTestSuite) TestRecordPerformance() {
 	}
 	resp := makeRequest(s.T(), s.client, "POST", s.baseURL+"/api/models/"+s.modelID+"/performance/record", s.authToken, req)
 	defer resp.Body.Close()
-	requireCreated(s.T(), resp)
+	requireSuccess(s.T(), resp)
 
 	var result struct {
 		Data struct {
@@ -192,7 +199,7 @@ func (s *PerformanceTestSuite) TestGetPerformanceHistory() {
 		"sample_count":  150,
 	}
 	seedResp := makeRequest(s.T(), s.client, "POST", s.baseURL+"/api/models/"+s.modelID+"/performance/record", s.authToken, seedReq)
-	requireCreated(s.T(), seedResp)
+	requireSuccess(s.T(), seedResp)
 	seedResp.Body.Close()
 
 	resp := makeRequest(s.T(), s.client, "GET", s.baseURL+"/api/models/"+s.modelID+"/performance/history", s.authToken, nil)
@@ -259,8 +266,8 @@ func (s *PerformanceTestSuite) TestGetGlobalThresholdDefaults() {
 // TestStartEvaluation verifies POST /api/models/:id/performance/evaluate starts an evaluation.
 func (s *PerformanceTestSuite) TestStartEvaluation() {
 	req := map[string]interface{}{
-		"datasource_id":  s.datasourceID,
-		"actual_column":  "BAD",
+		"datasource_id": s.datasourceID,
+		"actual_column": "BAD",
 	}
 	resp := makeRequest(s.T(), s.client, "POST", s.baseURL+"/api/models/"+s.modelID+"/performance/evaluate", s.authToken, req)
 	defer resp.Body.Close()
@@ -291,6 +298,62 @@ func (s *PerformanceTestSuite) TestGetEvaluations() {
 	}
 	parseResponse(s.T(), resp, &result)
 	assert.NotNil(s.T(), result.Data.Evaluations)
+}
+
+// TestGetEvaluationByID verifies GET /api/models/:id/performance/evaluations/:evaluationId after starting an evaluation.
+func (s *PerformanceTestSuite) TestGetEvaluationByID() {
+	req := map[string]interface{}{
+		"datasource_id": s.datasourceID,
+		"actual_column": "BAD",
+	}
+	startResp := makeRequest(s.T(), s.client, "POST", s.baseURL+"/api/models/"+s.modelID+"/performance/evaluate", s.authToken, req)
+	defer startResp.Body.Close()
+	require.True(s.T(), startResp.StatusCode == http.StatusCreated || startResp.StatusCode == http.StatusAccepted,
+		"start evaluation: status %d", startResp.StatusCode)
+
+	var started struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	parseResponse(s.T(), startResp, &started)
+	evalID := started.Data.ID
+	require.NotEmpty(s.T(), evalID)
+
+	getResp := makeRequest(s.T(), s.client, "GET",
+		fmt.Sprintf("%s/api/models/%s/performance/evaluations/%s", s.baseURL, s.modelID, evalID), s.authToken, nil)
+	defer getResp.Body.Close()
+	requireSuccess(s.T(), getResp)
+	var detail struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	parseResponse(s.T(), getResp, &detail)
+	assert.Equal(s.T(), evalID, detail.Data.ID)
+}
+
+// TestGetMetricTimeSeries verifies GET .../metrics/:metricName/series after recording metrics.
+func (s *PerformanceTestSuite) TestGetMetricTimeSeries() {
+	seedReq := map[string]interface{}{
+		"datasource_id": s.datasourceID,
+		"metrics":       map[string]float64{"r2": 0.81},
+		"sample_count":  100,
+	}
+	seedResp := makeRequest(s.T(), s.client, "POST", s.baseURL+"/api/models/"+s.modelID+"/performance/record", s.authToken, seedReq)
+	requireSuccess(s.T(), seedResp)
+	seedResp.Body.Close()
+
+	resp := makeRequest(s.T(), s.client, "GET", s.baseURL+"/api/models/"+s.modelID+"/performance/metrics/r2/series?limit=10", s.authToken, nil)
+	defer resp.Body.Close()
+	requireSuccess(s.T(), resp)
+	var result struct {
+		Data struct {
+			MetricName string `json:"metric_name"`
+		} `json:"data"`
+	}
+	parseResponse(s.T(), resp, &result)
+	assert.Equal(s.T(), "r2", result.Data.MetricName)
 }
 
 func TestPerformanceSuite(t *testing.T) {

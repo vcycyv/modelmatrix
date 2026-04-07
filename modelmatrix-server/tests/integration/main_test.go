@@ -50,6 +50,7 @@ import (
 	searchApp "modelmatrix-server/internal/module/search/application"
 	searchRepoPkg "modelmatrix-server/internal/module/search/repository"
 
+	"modelmatrix-server/internal/httpserver"
 	"modelmatrix-server/pkg/config"
 	"modelmatrix-server/pkg/logger"
 
@@ -64,6 +65,22 @@ const (
 	ldapAdminPass   = "admin"
 )
 
+// noopIntegrationCompute implements compute.Client for integration tests when no compute service URL is configured.
+type noopIntegrationCompute struct{}
+
+func (noopIntegrationCompute) TrainModel(*compute.TrainRequest) (*compute.TrainResponse, error) {
+	return &compute.TrainResponse{JobID: "noop-job"}, nil
+}
+func (noopIntegrationCompute) ScoreModel(*compute.ScoreRequest) (*compute.ScoreResponse, error) {
+	return &compute.ScoreResponse{JobID: "noop-job", Status: "accepted"}, nil
+}
+func (noopIntegrationCompute) EvaluatePerformance(*compute.EvaluateRequest) (*compute.EvaluateResponse, error) {
+	return &compute.EvaluateResponse{JobID: "noop-job", Status: "accepted"}, nil
+}
+func (noopIntegrationCompute) GetStatus(string) (*compute.JobStatusResponse, error) {
+	return &compute.JobStatusResponse{JobID: "noop-job", Status: "completed"}, nil
+}
+func (noopIntegrationCompute) HealthCheck() error { return nil }
 
 // TestMain starts all infrastructure once and runs all suites.
 // If TEST_DB_HOST is set, it uses existing services (dev mode).
@@ -184,11 +201,11 @@ func startContainers(ctx context.Context) func() {
 		Image:        "osixia/openldap:latest",
 		ExposedPorts: []string{"389/tcp"},
 		Env: map[string]string{
-			"LDAP_ORGANISATION":      "Example Org",
-			"LDAP_DOMAIN":            "example.org",
-			"LDAP_ADMIN_PASSWORD":    ldapAdminPass,
-			"LDAP_CONFIG_PASSWORD":   "configpassword",
-			"LDAP_RFC2307BIS_SCHEMA": "true",
+			"LDAP_ORGANISATION":              "Example Org",
+			"LDAP_DOMAIN":                    "example.org",
+			"LDAP_ADMIN_PASSWORD":            ldapAdminPass,
+			"LDAP_CONFIG_PASSWORD":           "configpassword",
+			"LDAP_RFC2307BIS_SCHEMA":         "true",
 			"LDAP_REMOVE_CONFIG_AFTER_SETUP": "false",
 		},
 		Networks:       []string{net.Name},
@@ -223,10 +240,15 @@ func startContainers(ctx context.Context) func() {
 
 // startComputeContainer builds and starts the compute service container.
 // Returns the compute service URL or empty string if unavailable.
+// Building the image is slow; set TEST_INTEGRATION_COMPUTE_CONTAINER=1 to enable it. Otherwise integration tests use noop compute.
 func startComputeContainer(ctx context.Context, netName string, containers []tc.Container) string {
+	if os.Getenv("TEST_INTEGRATION_COMPUTE_CONTAINER") != "1" && os.Getenv("TEST_INTEGRATION_COMPUTE_CONTAINER") != "true" {
+		return ""
+	}
 	// Determine the compute service Dockerfile context path
 	_, thisFile, _, _ := runtime.Caller(0)
-	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..")
+	// tests/integration -> modelmatrix-server -> modelmatrix (repo root)
+	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
 	computeCtx := filepath.Join(repoRoot, "modelmatrix-compute")
 
 	if _, err := os.Stat(filepath.Join(computeCtx, "Dockerfile")); err != nil {
@@ -245,13 +267,13 @@ func startComputeContainer(ctx context.Context, netName string, containers []tc.
 			},
 			ExposedPorts: []string{"8081/tcp"},
 			Env: map[string]string{
-				"MINIO_ENDPOINT":  "minio:9000",
+				"MINIO_ENDPOINT":   "minio:9000",
 				"MINIO_ACCESS_KEY": "minioadmin",
 				"MINIO_SECRET_KEY": "minioadmin123",
-				"MINIO_BUCKET":    "modelmatrixtest",
-				"MINIO_USE_SSL":   "false",
-				"COMPUTE_HOST":    "0.0.0.0",
-				"COMPUTE_PORT":    "8081",
+				"MINIO_BUCKET":     "modelmatrixtest",
+				"MINIO_USE_SSL":    "false",
+				"COMPUTE_HOST":     "0.0.0.0",
+				"COMPUTE_PORT":     "8081",
 			},
 			Networks:       []string{netName},
 			NetworkAliases: map[string][]string{netName: {"compute"}},
@@ -324,6 +346,7 @@ func buildTestRouter(ctx context.Context, cfg *config.Config, database *gorm.DB)
 	router := gin.New()
 	router.Use(gin.Recovery())
 	api := router.Group("/api")
+	api.GET("/health", httpserver.HealthHandler(ldapClient, fileSvc))
 	authMiddleware := auth.Middleware(tokenSvc)
 
 	// --- Datasource module ---
@@ -336,7 +359,7 @@ func buildTestRouter(ctx context.Context, cfg *config.Config, database *gorm.DB)
 	datasourceSvc := dsApp.NewDatasourceService(database, datasourceRepo, collectionRepo, columnRepo, dsDomainSvc, fileSvc, externalDBConn)
 	columnSvc := dsApp.NewColumnService(database, columnRepo, datasourceRepo, dsDomainSvc)
 
-	dsApi.NewAuthController(ldapClient, tokenSvc).RegisterRoutes(api)
+	dsApi.NewAuthController(ldapClient, tokenSvc).RegisterRoutes(api, tokenSvc)
 	dsApi.NewCollectionController(collectionSvc).RegisterRoutes(api, authMiddleware)
 	dsApi.NewDatasourceController(datasourceSvc, columnSvc).RegisterRoutes(api, authMiddleware)
 
@@ -369,6 +392,9 @@ func buildTestRouter(ctx context.Context, cfg *config.Config, database *gorm.DB)
 	if computeURL != "" {
 		cfg.Compute.ServiceURL = computeURL
 		computeClient = compute.NewClient(&cfg.Compute)
+	} else {
+		// No real compute URL: use in-process noop so /api/builds/:id/start and callbacks can be tested without a compute container.
+		computeClient = noopIntegrationCompute{}
 	}
 
 	// --- Build module ---

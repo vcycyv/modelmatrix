@@ -39,7 +39,9 @@ test-coverage:
 	go test -v -coverprofile=coverage.out ./internal/...
 	go tool cover -html=coverage.out -o coverage.html
 
-# Run integration tests (starts containers automatically via testcontainers)
+# Run integration tests (starts containers automatically via testcontainers).
+# Optional: TEST_INTEGRATION_COMPUTE_CONTAINER=1 builds/starts the modelmatrix-compute Docker image (slow).
+# Without it, tests use an in-process noop compute client for /api/builds/:id/start.
 test-integration:
 	go test -v -timeout 300s ./tests/integration/...
 

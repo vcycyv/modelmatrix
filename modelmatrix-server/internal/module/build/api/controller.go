@@ -1,10 +1,13 @@
 package api
 
 import (
+	"errors"
+
 	"modelmatrix-server/internal/infrastructure/auth"
 	"modelmatrix-server/internal/module/build/application"
 	"modelmatrix-server/internal/module/build/domain"
 	"modelmatrix-server/internal/module/build/dto"
+	dsDomain "modelmatrix-server/internal/module/datasource/domain"
 	"modelmatrix-server/pkg/response"
 
 	"github.com/gin-gonic/gin"
@@ -264,6 +267,10 @@ func (c *BuildController) Callback(ctx *gin.Context) {
 
 // handleError maps domain errors to HTTP responses
 func handleError(ctx *gin.Context, err error) {
+	if errors.Is(err, dsDomain.ErrDatasourceNotFound) {
+		response.NotFound(ctx, err.Error())
+		return
+	}
 	switch err {
 	case domain.ErrBuildNotFound:
 		response.NotFound(ctx, err.Error())

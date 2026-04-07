@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bytes"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"testing"
@@ -326,6 +327,117 @@ func (s *DatasourcesTestSuite) TestCreateDatasourceWithCSVFileUnauthorized() {
 	defer resp.Body.Close()
 
 	requireUnauthorized(s.T(), resp)
+}
+
+// TestDatasourceHTTPLifecycle exercises list, get, column role, preview, update, and delete for a CSV datasource end-to-end.
+func (s *DatasourcesTestSuite) TestDatasourceHTTPLifecycle() {
+	collectionID := s.createTestCollection("HTTP Lifecycle Collection", "datasource CRUD integration")
+	fixturePath := getFixturePath("hmeq.csv")
+	require.FileExists(s.T(), fixturePath)
+
+	formData := map[string]string{
+		"collection_id": collectionID,
+		"name":          "Lifecycle HMEQ",
+		"description":   "integration lifecycle",
+		"type":          "csv",
+	}
+	createResp := makeMultipartRequest(s.T(), s.client, "POST", s.baseURL+"/api/datasources", s.authToken, formData, "file", fixturePath)
+	requireCreated(s.T(), createResp)
+
+	var created struct {
+		Data struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	parseResponse(s.T(), createResp, &created)
+	dsID := created.Data.ID
+	require.NotEmpty(s.T(), dsID)
+
+	listURL := fmt.Sprintf("%s/api/datasources?collection_id=%s&page=1&page_size=20", s.baseURL, collectionID)
+	listResp := makeRequest(s.T(), s.client, "GET", listURL, s.authToken, nil)
+	defer listResp.Body.Close()
+	requireSuccess(s.T(), listResp)
+	var listResult struct {
+		Data struct {
+			Datasources []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"datasources"`
+			Total int64 `json:"total"`
+		} `json:"data"`
+	}
+	parseResponse(s.T(), listResp, &listResult)
+	require.GreaterOrEqual(s.T(), listResult.Data.Total, int64(1))
+	found := false
+	for _, d := range listResult.Data.Datasources {
+		if d.ID == dsID {
+			found = true
+			assert.Equal(s.T(), "Lifecycle HMEQ", d.Name)
+			break
+		}
+	}
+	require.True(s.T(), found, "created datasource should appear in collection-scoped list")
+
+	getResp := makeRequest(s.T(), s.client, "GET", s.baseURL+"/api/datasources/"+dsID, s.authToken, nil)
+	defer getResp.Body.Close()
+	requireSuccess(s.T(), getResp)
+	var detail struct {
+		Data struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			ColumnCount int    `json:"column_count"`
+			Columns     []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+				Role string `json:"role"`
+			} `json:"columns"`
+		} `json:"data"`
+	}
+	parseResponse(s.T(), getResp, &detail)
+	assert.Equal(s.T(), dsID, detail.Data.ID)
+	assert.Greater(s.T(), detail.Data.ColumnCount, 0)
+	require.NotEmpty(s.T(), detail.Data.Columns)
+
+	colID := detail.Data.Columns[0].ID
+	putRole := makeRequest(s.T(), s.client, "PUT", s.baseURL+"/api/datasources/"+dsID+"/columns/"+colID+"/role", s.authToken,
+		map[string]string{"role": "input"})
+	defer putRole.Body.Close()
+	requireSuccess(s.T(), putRole)
+
+	prevResp := makeRequest(s.T(), s.client, "GET", s.baseURL+"/api/datasources/"+dsID+"/preview?limit=5", s.authToken, nil)
+	defer prevResp.Body.Close()
+	requireSuccess(s.T(), prevResp)
+	var preview struct {
+		Data struct {
+			Columns []string                 `json:"columns"`
+			Rows    []map[string]interface{} `json:"rows"`
+		} `json:"data"`
+	}
+	parseResponse(s.T(), prevResp, &preview)
+	assert.NotEmpty(s.T(), preview.Data.Columns)
+	assert.NotEmpty(s.T(), preview.Data.Rows)
+
+	newName := "Lifecycle HMEQ Renamed"
+	upResp := makeRequest(s.T(), s.client, "PUT", s.baseURL+"/api/datasources/"+dsID, s.authToken,
+		map[string]string{"name": newName})
+	defer upResp.Body.Close()
+	requireSuccess(s.T(), upResp)
+	var updated struct {
+		Data struct {
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	parseResponse(s.T(), upResp, &updated)
+	assert.Equal(s.T(), newName, updated.Data.Name)
+
+	delResp := makeRequest(s.T(), s.client, "DELETE", s.baseURL+"/api/datasources/"+dsID, s.authToken, nil)
+	defer delResp.Body.Close()
+	requireNoContent(s.T(), delResp)
+
+	goneResp := makeRequest(s.T(), s.client, "GET", s.baseURL+"/api/datasources/"+dsID, s.authToken, nil)
+	defer goneResp.Body.Close()
+	requireNotFound(s.T(), goneResp)
 }
 
 // TestDatasourcesSuite runs all datasource tests

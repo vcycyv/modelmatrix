@@ -163,7 +163,9 @@ func (s *ModelsTestSuite) TestActivateDeactivateModel() {
 	requireSuccess(s.T(), resp)
 
 	var activateResult struct {
-		Data struct{ Status string `json:"status"` } `json:"data"`
+		Data struct {
+			Status string `json:"status"`
+		} `json:"data"`
 	}
 	parseResponse(s.T(), resp, &activateResult)
 	assert.Equal(s.T(), "active", activateResult.Data.Status)
@@ -174,7 +176,9 @@ func (s *ModelsTestSuite) TestActivateDeactivateModel() {
 	requireSuccess(s.T(), resp2)
 
 	var deactivateResult struct {
-		Data struct{ Status string `json:"status"` } `json:"data"`
+		Data struct {
+			Status string `json:"status"`
+		} `json:"data"`
 	}
 	parseResponse(s.T(), resp2, &deactivateResult)
 	assert.Equal(s.T(), "inactive", deactivateResult.Data.Status)
@@ -196,7 +200,7 @@ func (s *ModelsTestSuite) TestActivateModel_AlreadyActive() {
 	// Activate again — should fail
 	resp2 := makeRequest(s.T(), s.client, "POST", s.baseURL+"/api/models/"+modelID+"/activate", s.authToken, nil)
 	defer resp2.Body.Close()
-	assert.Equal(s.T(), http.StatusUnprocessableEntity, resp2.StatusCode)
+	assert.Equal(s.T(), http.StatusBadRequest, resp2.StatusCode)
 }
 
 // TestDeleteModel verifies DELETE /api/models/:id removes the model.
@@ -234,7 +238,7 @@ func (s *ModelsTestSuite) TestDeleteModel_WhenActive() {
 	// Delete should fail
 	resp := makeRequest(s.T(), s.client, "DELETE", s.baseURL+"/api/models/"+modelID, s.authToken, nil)
 	defer resp.Body.Close()
-	assert.Equal(s.T(), http.StatusUnprocessableEntity, resp.StatusCode)
+	assert.Equal(s.T(), http.StatusConflict, resp.StatusCode)
 }
 
 // TestModelsUnauthorized verifies that unauthenticated requests return 401.
@@ -252,7 +256,9 @@ func (s *ModelsTestSuite) createCollection(t *testing.T, name string) string {
 	defer resp.Body.Close()
 	requireCreated(t, resp)
 	var r struct {
-		Data struct{ ID string `json:"id"` } `json:"data"`
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 	parseResponse(t, resp, &r)
 	require.NotEmpty(t, r.Data.ID)
@@ -268,9 +274,12 @@ func (s *ModelsTestSuite) createDatasource(t *testing.T, collID string) string {
 	defer resp.Body.Close()
 	requireCreated(t, resp)
 	var r struct {
-		Data struct{ ID string `json:"id"` } `json:"data"`
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 	parseResponse(t, resp, &r)
+	ensureTrainingColumnRoles(t, s.client, s.baseURL, s.authToken, r.Data.ID)
 	return r.Data.ID
 }
 

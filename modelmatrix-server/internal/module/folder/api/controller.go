@@ -208,7 +208,7 @@ func (c *FolderController) DeleteFolder(ctx *gin.Context) {
 		return
 	}
 
-	response.Success(ctx, gin.H{"message": "folder deleted"})
+	response.NoContent(ctx)
 }
 
 // GetFolderContentsCount godoc
@@ -439,7 +439,7 @@ func (c *FolderController) DeleteProject(ctx *gin.Context) {
 		return
 	}
 
-	response.Success(ctx, gin.H{"message": "project deleted"})
+	response.NoContent(ctx)
 }
 
 // GetBuildsInProject godoc

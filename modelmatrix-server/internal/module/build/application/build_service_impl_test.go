@@ -6,11 +6,35 @@ import (
 
 	"modelmatrix-server/internal/module/build/domain"
 	"modelmatrix-server/internal/module/build/dto"
+	dsdto "modelmatrix-server/internal/module/datasource/dto"
 	"modelmatrix-server/pkg/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// okDatasourceSvc is a minimal DatasourceService for Create tests (GetByID must succeed).
+type okDatasourceSvc struct{}
+
+func (okDatasourceSvc) Create(*dsdto.CreateDatasourceRequest, string, []byte, string) (*dsdto.DatasourceResponse, error) {
+	return nil, errors.New("not implemented")
+}
+func (okDatasourceSvc) Update(string, *dsdto.UpdateDatasourceRequest) (*dsdto.DatasourceResponse, error) {
+	return nil, errors.New("not implemented")
+}
+func (okDatasourceSvc) Delete(string) error { return errors.New("not implemented") }
+func (okDatasourceSvc) GetByID(string) (*dsdto.DatasourceDetailResponse, error) {
+	return &dsdto.DatasourceDetailResponse{}, nil
+}
+func (okDatasourceSvc) List(*string, *dsdto.ListParams) (*dsdto.DatasourceListResponse, error) {
+	return nil, errors.New("not implemented")
+}
+func (okDatasourceSvc) CreateFromExistingFile(string, string, string, int, string) (*dsdto.DatasourceResponse, error) {
+	return nil, errors.New("not implemented")
+}
+func (okDatasourceSvc) GetDataPreview(string, int) (*dsdto.DataPreviewResponse, error) {
+	return nil, errors.New("not implemented")
+}
 
 // ---------------------------------------------------------------------------
 // fakeBuildRepo — full implementation of repository.BuildRepository
@@ -89,7 +113,7 @@ func buildSvcImpl(repo *fakeBuildRepo) BuildService {
 		repo,
 		domain.NewService(),
 		nil, // computeClient — not used for Create/Cancel/Delete
-		nil, // datasourceService
+		okDatasourceSvc{},
 		nil, // modelService
 		nil, // versionService
 		nil, // folderService

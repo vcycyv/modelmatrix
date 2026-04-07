@@ -37,12 +37,12 @@ func NewAuthController(ldapClient ldap.Client, tokenService *auth.TokenService) 
 	}
 }
 
-// RegisterRoutes registers auth routes
-func (c *AuthController) RegisterRoutes(router *gin.RouterGroup) {
+// RegisterRoutes registers auth routes. Refresh requires a valid Bearer token (JWT middleware).
+func (c *AuthController) RegisterRoutes(router *gin.RouterGroup, tokenService *auth.TokenService) {
 	authGroup := router.Group("/auth")
 	{
 		authGroup.POST("/login", c.Login)
-		authGroup.POST("/refresh", c.Refresh)
+		authGroup.POST("/refresh", auth.Middleware(tokenService), c.Refresh)
 	}
 }
 

@@ -23,7 +23,7 @@ import (
 // Initialized by TestMain in main_test.go.
 var (
 	testDB        *gorm.DB
-	testRouter    *gin.Engine   //nolint:unused
+	testRouter    *gin.Engine    //nolint:unused
 	testConfig    *config.Config //nolint:unused
 	testServerURL string
 	testServer    *httptest.Server //nolint:unused
@@ -167,12 +167,13 @@ func truncateAllTables(t *testing.T) {
 	if testDB == nil {
 		return
 	}
+	// Table names must match GORM TableName() on models (see internal/module/inventory/model/performance.go).
 	err := testDB.Exec(`TRUNCATE TABLE
-		performance_evaluations,
-		performance_alerts,
-		performance_records,
-		performance_baselines,
-		performance_thresholds,
+		model_performance_evaluations,
+		model_performance_alerts,
+		model_performance_records,
+		model_performance_baselines,
+		model_performance_thresholds,
 		performance_threshold_defaults,
 		model_version_files,
 		model_version_variables,
@@ -250,4 +251,41 @@ func dbInsert(t *testing.T, value interface{}) {
 // newAPIClient returns a fresh http.Client for tests.
 func newAPIClient() *http.Client {
 	return &http.Client{Timeout: 30 * time.Second}
+}
+
+// ensureTrainingColumnRoles sets one column as target (prefers "BAD" on HMEQ-style CSVs) and the rest as input
+// so POST /api/builds/:id/start can resolve target/input columns.
+func ensureTrainingColumnRoles(t *testing.T, client *http.Client, baseURL, token, datasourceID string) {
+	t.Helper()
+	resp := makeRequest(t, client, "GET", baseURL+"/api/datasources/"+datasourceID+"/columns", token, nil)
+	defer resp.Body.Close()
+	requireSuccess(t, resp)
+	var result struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	parseResponse(t, resp, &result)
+	require.NotEmpty(t, result.Data, "datasource should have columns")
+
+	targetID := result.Data[0].ID
+	for _, c := range result.Data {
+		if c.Name == "BAD" {
+			targetID = c.ID
+			break
+		}
+	}
+	updates := make([]map[string]string, 0, len(result.Data))
+	for _, c := range result.Data {
+		role := "input"
+		if c.ID == targetID {
+			role = "target"
+		}
+		updates = append(updates, map[string]string{"column_id": c.ID, "role": role})
+	}
+	putResp := makeRequest(t, client, "PUT", baseURL+"/api/datasources/"+datasourceID+"/columns/roles", token,
+		map[string]interface{}{"columns": updates})
+	defer putResp.Body.Close()
+	requireSuccess(t, putResp)
 }

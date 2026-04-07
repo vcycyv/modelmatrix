@@ -283,7 +283,7 @@ func TestFolderController_UpdateFolder_NotFound(t *testing.T) {
 func TestFolderController_DeleteFolder_Success(t *testing.T) {
 	r := setupFolderRouter(&mockFolderService{})
 	w := doFolderReq(r, "DELETE", "/api/folders/f1", nil)
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusNoContent, w.Code)
 }
 
 func TestFolderController_DeleteFolder_HasChildren(t *testing.T) {
@@ -309,7 +309,7 @@ func TestFolderController_DeleteFolder_ForceQueryParam(t *testing.T) {
 	req, _ := http.NewRequest("DELETE", "/api/folders/f1?force=true", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusNoContent, w.Code)
 	assert.True(t, capturedForce)
 }
 
@@ -392,7 +392,7 @@ func TestFolderController_UpdateProject_Success(t *testing.T) {
 func TestFolderController_DeleteProject_Success(t *testing.T) {
 	r := setupFolderRouter(&mockFolderService{})
 	w := doFolderReq(r, "DELETE", "/api/projects/p1", nil)
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusNoContent, w.Code)
 }
 
 func TestFolderController_DeleteProject_HasModels(t *testing.T) {

@@ -54,7 +54,37 @@ func (s *BuildsTestSuite) seedDatasource(t *testing.T) string {
 		Data struct{ ID string `json:"id"` } `json:"data"`
 	}
 	parseResponse(t, dsResp, &dsResult)
+	ensureTrainingColumnRoles(t, s.client, s.baseURL, s.authToken, dsResult.Data.ID)
 	return dsResult.Data.ID
+}
+
+// TestListBuilds verifies GET /api/builds returns created builds.
+func (s *BuildsTestSuite) TestListBuilds() {
+	buildID := s.createBuild(s.T(), "List Builds Row")
+
+	resp := makeRequest(s.T(), s.client, "GET", s.baseURL+"/api/builds?page=1&page_size=50", s.authToken, nil)
+	defer resp.Body.Close()
+	requireSuccess(s.T(), resp)
+
+	var result struct {
+		Data struct {
+			Builds []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"builds"`
+			Total int64 `json:"total"`
+		} `json:"data"`
+	}
+	parseResponse(s.T(), resp, &result)
+	require.GreaterOrEqual(s.T(), result.Data.Total, int64(1))
+	found := false
+	for _, b := range result.Data.Builds {
+		if b.ID == buildID {
+			found = true
+			break
+		}
+	}
+	require.True(s.T(), found, "created build should appear in GET /api/builds")
 }
 
 // TestCreateBuild verifies POST /api/builds creates a pending build.
@@ -107,7 +137,7 @@ func (s *BuildsTestSuite) TestCreateBuild_InvalidDatasource() {
 	}
 	resp := makeRequest(s.T(), s.client, "POST", s.baseURL+"/api/builds", s.authToken, req)
 	defer resp.Body.Close()
-	assert.NotEqual(s.T(), http.StatusCreated, resp.StatusCode)
+	requireNotFound(s.T(), resp)
 }
 
 // TestGetBuild verifies GET /api/builds/:id returns build details.

@@ -42,7 +42,7 @@ func setupAuthRouter(ldapClient ldap.Client, tokenSvc *auth.TokenService) *gin.E
 	r := gin.New()
 	ctrl := NewAuthController(ldapClient, tokenSvc)
 	api := r.Group("/api")
-	ctrl.RegisterRoutes(api)
+	ctrl.RegisterRoutes(api, tokenSvc)
 	return r
 }
 
@@ -146,13 +146,11 @@ func TestAuthController_Refresh_ValidToken(t *testing.T) {
 	token, err := tokenSvc.GenerateToken(user)
 	require.NoError(t, err)
 
-	// Build router with auth middleware so claims are injected for Refresh
 	gin.SetMode(gin.TestMode)
 	r2 := gin.New()
-	r2.Use(auth.Middleware(tokenSvc))
 	ctrl := NewAuthController(&mockLDAPClient{}, tokenSvc)
 	api := r2.Group("/api")
-	ctrl.RegisterRoutes(api)
+	ctrl.RegisterRoutes(api, tokenSvc)
 
 	req, _ := http.NewRequest("POST", "/api/auth/refresh", nil)
 	req.Header.Set("Authorization", "Bearer "+token)

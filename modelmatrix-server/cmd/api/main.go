@@ -41,9 +41,9 @@ import (
 	searchApp "modelmatrix-server/internal/module/search/application"
 	searchRepo "modelmatrix-server/internal/module/search/repository"
 
+	"modelmatrix-server/internal/httpserver"
 	"modelmatrix-server/pkg/config"
 	"modelmatrix-server/pkg/logger"
-	"modelmatrix-server/pkg/response"
 	"modelmatrix-server/pkg/swagger"
 
 	"github.com/gin-gonic/gin"
@@ -136,7 +136,7 @@ func main() {
 	api := router.Group("/api")
 
 	// Health check endpoint
-	api.GET("/health", healthCheckHandler(ldapClient, fileService))
+	api.GET("/health", httpserver.HealthHandler(ldapClient, fileService))
 
 	// Auth middleware
 	authMiddleware := auth.Middleware(tokenService)
@@ -159,7 +159,7 @@ func main() {
 	datasourceController := dsApi.NewDatasourceController(datasourceService, columnService)
 
 	// Register datasource routes
-	authController.RegisterRoutes(api)
+	authController.RegisterRoutes(api, tokenService)
 	collectionController.RegisterRoutes(api, authMiddleware)
 	datasourceController.RegisterRoutes(api, authMiddleware)
 
@@ -300,47 +300,6 @@ func runMigrations(database interface{}) error {
 
 	logger.Info("Database migrations completed")
 	return nil
-}
-
-// healthCheckHandler returns a health check handler
-func healthCheckHandler(ldapClient infraldap.Client, fileService fileservice.FileService) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		health := struct {
-			Status   string `json:"status"`
-			Database string `json:"database"`
-			LDAP     string `json:"ldap"`
-			MinIO    string `json:"minio"`
-		}{
-			Status:   "healthy",
-			Database: "healthy",
-			LDAP:     "healthy",
-			MinIO:    "healthy",
-		}
-
-		// Check database
-		if err := db.HealthCheck(); err != nil {
-			health.Status = "unhealthy"
-			health.Database = "unhealthy: " + err.Error()
-		}
-
-		// Check LDAP
-		if err := ldapClient.HealthCheck(); err != nil {
-			health.Status = "unhealthy"
-			health.LDAP = "unhealthy: " + err.Error()
-		}
-
-		// Check MinIO
-		if err := fileService.HealthCheck(); err != nil {
-			health.Status = "unhealthy"
-			health.MinIO = "unhealthy: " + err.Error()
-		}
-
-		if health.Status == "healthy" {
-			response.Success(c, health)
-		} else {
-			response.ServiceUnavailable(c, health.Status)
-		}
-	}
 }
 
 // corsMiddleware adds CORS headers

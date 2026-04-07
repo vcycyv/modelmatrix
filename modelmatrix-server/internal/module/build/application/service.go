@@ -1,6 +1,7 @@
 package application
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -36,15 +37,15 @@ type BuildService interface {
 
 // BuildServiceImpl implements BuildService
 type BuildServiceImpl struct {
-	buildRepo           repository.BuildRepository
-	domainService       *domain.Service
-	computeClient       compute.Client
-	datasourceService   dsApp.DatasourceService
-	modelService        invApp.ModelService
-	versionService      invApp.ModelVersionService
-	folderService       folderApp.FolderService
+	buildRepo          repository.BuildRepository
+	domainService      *domain.Service
+	computeClient      compute.Client
+	datasourceService  dsApp.DatasourceService
+	modelService       invApp.ModelService
+	versionService     invApp.ModelVersionService
+	folderService      folderApp.FolderService
 	performanceService invApp.PerformanceService // optional: for auto-baseline on model creation
-	config              *config.Config
+	config             *config.Config
 }
 
 // NewBuildService creates a new build service
@@ -60,15 +61,15 @@ func NewBuildService(
 	cfg *config.Config,
 ) BuildService {
 	return &BuildServiceImpl{
-		buildRepo:           buildRepo,
-		domainService:       domainService,
-		computeClient:       computeClient,
-		datasourceService:   datasourceService,
-		modelService:        modelService,
-		versionService:      versionService,
-		folderService:       folderSvc,
-		performanceService:  performanceService,
-		config:              cfg,
+		buildRepo:          buildRepo,
+		domainService:      domainService,
+		computeClient:      computeClient,
+		datasourceService:  datasourceService,
+		modelService:       modelService,
+		versionService:     versionService,
+		folderService:      folderSvc,
+		performanceService: performanceService,
+		config:             cfg,
 	}
 }
 
@@ -128,6 +129,13 @@ func (s *BuildServiceImpl) Create(req *dto.CreateBuildRequest, createdBy string)
 
 	// Validate parameters
 	if err := s.domainService.ValidateParameters(&build.Parameters); err != nil {
+		return nil, err
+	}
+
+	if _, err := s.datasourceService.GetByID(req.DatasourceID); err != nil {
+		if errors.Is(err, dsDomain.ErrDatasourceNotFound) {
+			return nil, dsDomain.ErrDatasourceNotFound
+		}
 		return nil, err
 	}
 
